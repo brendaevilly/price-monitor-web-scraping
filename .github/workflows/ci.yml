@@ -41,12 +41,3 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Lint (placeholder)
-        run: echo "Lint do frontend - configurar eslint aqui"
-
-      - name: Run tests (placeholder)
-        run: echo "Testes do frontend - configurar vitest/jest aqui"
