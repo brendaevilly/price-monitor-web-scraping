@@ -12,6 +12,11 @@
 - Coleta: BeautifulSoup + Requests / Playwright
 - Agendamento: APScheduler
 
+## Figma
+- Definição de paletas, tipografia e componentes-base: [Figma](https://www.figma.com/design/rWfjZeqQvwbwf1fHIfCjjX/PriceBrother-%E2%80%94-UI-UX?node-id=0-1&m=dev&t=gSoo01tU4A04bdfV-1)
+
+
+
 ## Estrutura do repositorio
 
 - \`backend/\` - API e logica de scraping
