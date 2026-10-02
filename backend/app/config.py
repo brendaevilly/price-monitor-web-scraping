@@ -16,5 +16,20 @@ class Settings:
     COLETA_MAX_TENTATIVAS: int = int(os.getenv("COLETA_MAX_TENTATIVAS", "3"))
     COLETA_TIMEOUT_SEGUNDOS: float = float(os.getenv("COLETA_TIMEOUT_SEGUNDOS", "15"))
 
+    # RF06 — agendamento da coleta periódica (APScheduler)
+    COLETA_SCHEDULER_HABILITADO: bool = os.getenv(
+        "COLETA_SCHEDULER_HABILITADO", "true"
+    ).strip().lower() in {"1", "true", "yes", "sim", "on"}
+    COLETA_SCHEDULER_INTERVALO_MINUTOS: int = int(
+        os.getenv("COLETA_SCHEDULER_INTERVALO_MINUTOS", "60")
+    )
+    _intervalo_segundos = os.getenv("COLETA_SCHEDULER_INTERVALO_SEGUNDOS", "").strip()
+    COLETA_SCHEDULER_INTERVALO_SEGUNDOS: int | None = (
+        int(_intervalo_segundos) if _intervalo_segundos else None
+    )
+    COLETA_SCHEDULER_EXECUTAR_NO_STARTUP: bool = os.getenv(
+        "COLETA_SCHEDULER_EXECUTAR_NO_STARTUP", "false"
+    ).strip().lower() in {"1", "true", "yes", "sim", "on"}
+
 
 settings = Settings()

@@ -40,11 +40,13 @@ resultado = ColetaService().executarColeta(produto, db)
 
 `executarColeta` é o nome do caso de uso. Em Python o método canônico é `executar_coleta`.
 
-Para varrer todos os produtos ativos (entrada do agendador, issue #46):
+Para varrer todos os produtos ativos (entrada do agendador):
 
 ```python
 resultados = ColetaService().executar_coleta_ativos(db)
 ```
+
+A coleta recorrente sem intervenção manual é feita pelo APScheduler. Veja [coleta-periodica.md](./coleta-periodica.md).
 
 ### Resultado
 
