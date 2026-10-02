@@ -31,5 +31,28 @@ class Settings:
         "COLETA_SCHEDULER_EXECUTAR_NO_STARTUP", "false"
     ).strip().lower() in {"1", "true", "yes", "sim", "on"}
 
+    # RF15 / RF16 — alerta por e-mail (RN07, RN08, RN11)
+    ALERTA_QUEDA_MINIMA_PERCENTUAL: float = float(
+        os.getenv("ALERTA_QUEDA_MINIMA_PERCENTUAL", "5")
+    )
+    ALERTA_INTERVALO_REENVIOS_HORAS: int = int(
+        os.getenv("ALERTA_INTERVALO_REENVIOS_HORAS", "24")
+    )
+    ALERTA_SMTP_DRY_RUN: bool = os.getenv(
+        "ALERTA_SMTP_DRY_RUN", "false"
+    ).strip().lower() in {"1", "true", "yes", "sim", "on"}
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USER: str = os.getenv("SMTP_USER", "")
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+    SMTP_FROM: str = os.getenv("SMTP_FROM", "")
+    SMTP_USAR_TLS: bool = os.getenv("SMTP_USAR_TLS", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "sim",
+        "on",
+    }
+
 
 settings = Settings()
