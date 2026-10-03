@@ -6,6 +6,8 @@ from app.database import Base, engine
 from app.models import alerta, historico_preco, loja, monitoramento, produto, usuario  # noqa: F401
 from app.routers import usuario as usuario_router
 from app.scheduler import iniciar_agendador, parar_agendador, status_agendador
+from app.routers import loja as loja_router
+from app.routers import produto as produto_router
 
 Base.metadata.create_all(bind=engine)
 
