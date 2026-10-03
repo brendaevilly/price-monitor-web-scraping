@@ -1,4 +1,3 @@
-
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -32,3 +31,5 @@ def health_check():
 
 
 app.include_router(usuario_router.router)
+app.include_router(loja_router.router)
+app.include_router(produto_router.router)

@@ -9,14 +9,14 @@ CREATE TABLE usuarios (
 CREATE TABLE lojas (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     nome TEXT NOT NULL,
-    dominio TEXT NOT NULL
+    dominio TEXT NOT NULL UNIQUE
 );
 
 -- Produto
 CREATE TABLE produtos (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     nome TEXT NOT NULL,
-    url_produto TEXT NOT NULL,
+    url_produto TEXT NOT NULL UNIQUE,
     ativo BOOLEAN NOT NULL DEFAULT true,
     criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
     loja_id UUID NOT NULL REFERENCES lojas(id)
