@@ -42,14 +42,15 @@ Repita o `POST /usuarios` com o mesmo e-mail do TM02.
 **Resultado:** [ ] passou  [ ] falhou  
 **Data / quem:**
 
-## TM04 — Telas de login e cadastro
+## TM04 — Login e cadastro na API (UC01, UC02)
 
-1. Abra http://127.0.0.1:5173
-2. Preencha o login e envie (ainda só `console.log`)
-3. Clique em Cadastre-se, preencha e envie
-4. Volte para o login pelo link da tela
+1. Abra http://127.0.0.1:5173/cadastro e crie uma conta
+2. Confirme o redirecionamento para `/login` com aviso de sucesso
+3. Entre com a conta nova e confira `/dashboard`
+4. Tente cadastrar o mesmo e-mail (409) e entrar com senha errada (401)
+5. Abra `/dashboard` em aba anônima sem token: deve ir para `/login`
 
-**Esperado:** as duas telas renderizam e alternam. A ligação real com a API é a issue #49.  
+**Esperado:** cadastro e login falam com `/usuarios` e `/usuarios/login`. Erros de e-mail duplicado e credenciais inválidas aparecem na tela.  
 **Resultado:** [ ] passou  [ ] falhou  
 **Data / quem:**
 

@@ -1,8 +1,16 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'http://localhost:8000', //mudar para quando o back estiver proto
-  timeout: 5000,
+  baseURL: import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000',
+  timeout: 15000,
+});
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('pb_access_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
 });
 
 export default api;

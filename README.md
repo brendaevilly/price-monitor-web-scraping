@@ -27,6 +27,7 @@ Documentação complementar:
 - [Coleta periódica (APScheduler)](docs/coleta-periodica.md)
 - [AlertaService](docs/alerta-service.md)
 - [Testes manuais (RNF12)](docs/testes-manuais.md)
+- [Manual de demonstração](docs/demonstracao.md)
 
 ## Variáveis de ambiente
 
@@ -63,6 +64,7 @@ FRONTEND_PORT=5173
 
 | Variável | Função |
 | --- | --- |
+| `VITE_API_URL` | URL da API (padrão `http://127.0.0.1:8000`) |
 | `VITE_SUPABASE_URL` | URL pública do Supabase |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | Chave pública (anon) do Supabase |
 
@@ -130,7 +132,7 @@ npm install
 npm run dev
 ```
 
-A interface sobe em http://127.0.0.1:5173. O axios aponta para `http://localhost:8000`. As telas de login e cadastro ainda estão no fluxo visual (issue #49 liga na API).
+A interface sobe em http://127.0.0.1:5173. O axios usa `VITE_API_URL` (padrão `http://127.0.0.1:8000`). Login e cadastro falam com `/usuarios` e `/usuarios/login`.
 
 ## Testes manuais (RNF12)
 
@@ -141,7 +143,7 @@ Checklist dos fluxos críticos implementados até a Sprint 2. Marque cada item a
 | TM01 | Health da API | `GET /health` | `status: ok` e bloco `coleta_periodica` |
 | TM02 | Cadastro de usuário (UC01) | `POST /usuarios` no Swagger | `201` com id, nome, e-mail e `criado_em` |
 | TM03 | E-mail duplicado (UC01 3a) | Repetir o mesmo e-mail | `409` |
-| TM04 | Telas login/cadastro | Abrir o frontend e alternar as telas | Formulários renderizam; submit ainda só no console |
+| TM04 | Login e cadastro na API | `/cadastro` e `/login` | Conta criada, token no dashboard, erros 409/401 na tela |
 | TM05 | Coleta periódica (RF06) | Subir a API e olhar `/health` | `coleta_periodica.ativo: true` e `proxima_execucao` preenchida |
 | TM06 | Recorrência curta | `COLETA_SCHEDULER_INTERVALO_SEGUNDOS=10` e `EXECUTAR_NO_STARTUP=true` | Logs `Iniciando coleta periódica` se repetem |
 | TM07 | Docker Compose | `docker compose up --build` | Backend `:8000` e frontend `:5173` sobem |

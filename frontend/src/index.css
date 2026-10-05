@@ -192,8 +192,34 @@ body {
   cursor: pointer;
 }
 
-.auth-form-panel button[type="submit"]:hover {
+.auth-form-panel button[type="submit"]:hover:not(:disabled) {
   background: var(--accent-dark);
+}
+
+.auth-form-panel button[type="submit"]:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.auth-erro,
+.auth-sucesso {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.auth-erro {
+  color: #ffb4b4;
+  background: rgba(180, 40, 40, 0.18);
+  border: 1px solid rgba(180, 40, 40, 0.4);
+}
+
+.auth-sucesso {
+  color: var(--accent);
+  background: rgba(61, 220, 151, 0.1);
+  border: 1px solid rgba(61, 220, 151, 0.35);
 }
 
 .auth-switch {
@@ -203,7 +229,8 @@ body {
   text-align: center;
 }
 
-.auth-switch button {
+.auth-switch button,
+.auth-switch a {
   background: none;
   border: none;
   color: var(--accent);
@@ -211,6 +238,7 @@ body {
   font-weight: 600;
   cursor: pointer;
   padding: 0;
+  text-decoration: none;
 }
 
 @media (min-width: 768px) {
@@ -283,4 +311,76 @@ body {
     width: 100%;
     max-width: 280px;
   }
+}
+
+.dash-page {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.dash-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dash-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.dash-user button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.dash-user button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.dash-main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+.dash-main h1 {
+  margin: 0 0 8px;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.dash-lead {
+  margin: 0 0 24px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.dash-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.dash-card h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.dash-card p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
 }
