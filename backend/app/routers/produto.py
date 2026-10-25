@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -11,9 +12,10 @@ from app.models.loja import Loja
 from app.models.monitoramento import Monitoramento
 from app.models.produto import Produto
 from app.models.usuario import Usuario
+from app.schemas.analise import AnaliseProdutoOut
 from app.schemas.historico import ColetaPrecoOut, HistoricoProdutoOut
 from app.schemas.produto import ProdutoCreate, ProdutoMonitoradoOut
-from app.services.analise_service import AnaliseService
+from app.services.analise_service import AnaliseService, ClassificacaoQueda
 from app.utils.urls import url_pertence_a_loja
 
 router = APIRouter(prefix="/produtos", tags=["Produto"])
@@ -110,6 +112,42 @@ def listar_produtos(
     return [_montar_saida(p, l, m) for p, l, m in linhas]
 
 
+def _duas_casas(valor: Decimal | None) -> Decimal | None:
+    if valor is None:
+        return None
+    return Decimal(valor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _produto_monitorado_pelo_usuario(db: Session, produto_id: uuid.UUID, usuario: Usuario) -> Produto:
+    """RNF03: só dá acesso a produtos que o usuário monitora; não revela se o
+    produto existe mas é monitorado só por outra pessoa."""
+    produto = db.get(Produto, produto_id)
+    monitora = db.scalar(
+        select(Monitoramento).where(
+            Monitoramento.usuario_id == usuario.id,
+            Monitoramento.produto_id == produto_id,
+        )
+    )
+    if produto is None or monitora is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, _MSG_NAO_ENCONTRADO)
+    return produto
+
+
+def _coletas_validas(db: Session, produto_id: uuid.UUID) -> list[HistoricoPreco]:
+    """RN09: só coletas deste produto (nunca mistura com outro) e só válidas,
+    da mais antiga para a mais recente."""
+    return list(
+        db.scalars(
+            select(HistoricoPreco)
+            .where(
+                HistoricoPreco.produto_id == produto_id,
+                HistoricoPreco.coleta_valida.is_(True),
+            )
+            .order_by(HistoricoPreco.data_hora_coleta.asc())
+        ).all()
+    )
+
+
 @router.get(
     "/{produto_id}/historico",
     response_model=HistoricoProdutoOut,
@@ -120,30 +158,8 @@ def consultar_historico(
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
 ):
-    produto = db.get(Produto, produto_id)
-
-    # RNF03: só devolve histórico de produtos que o usuário monitora; não revela
-    # se o produto existe mas pertence/é monitorado só por outra pessoa.
-    monitora = db.scalar(
-        select(Monitoramento).where(
-            Monitoramento.usuario_id == usuario.id,
-            Monitoramento.produto_id == produto_id,
-        )
-    )
-    if produto is None or monitora is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, _MSG_NAO_ENCONTRADO)
-
-    # RN09: histórico é sempre de um único produto (filtro por produto_id,
-    # nunca misturado com o de outro) e só com coletas válidas, em ordem
-    # cronológica (mais antiga -> mais recente).
-    coletas = db.scalars(
-        select(HistoricoPreco)
-        .where(
-            HistoricoPreco.produto_id == produto_id,
-            HistoricoPreco.coleta_valida.is_(True),
-        )
-        .order_by(HistoricoPreco.data_hora_coleta.asc())
-    ).all()
+    produto = _produto_monitorado_pelo_usuario(db, produto_id, usuario)
+    coletas = _coletas_validas(db, produto_id)
 
     if not coletas:
         return HistoricoProdutoOut(
@@ -157,8 +173,8 @@ def consultar_historico(
             amostras_media=0,
         )
 
-    # RN10: preço atual e média histórica (a média só vem preenchida quando há
-    # amostras suficientes, mesmo critério usado na análise de quedas - UC11).
+    # RN10: a média só vem preenchida quando há amostras suficientes (mesmo
+    # critério da análise de quedas, UC11).
     resultado = _analise_service.classificar(coletas)
 
     return HistoricoProdutoOut(
@@ -168,6 +184,55 @@ def consultar_historico(
         coletas=[ColetaPrecoOut.model_validate(c) for c in coletas],
         preco_atual=resultado.preco_atual,
         menor_preco=min(c.preco for c in coletas),
-        media_historica=resultado.media_historica,
+        media_historica=_duas_casas(resultado.media_historica),
         amostras_media=resultado.amostras_media,
+    )
+
+
+@router.get(
+    "/{produto_id}/analise",
+    response_model=AnaliseProdutoOut,
+    summary="Analisar variação de preço e classificar queda (UC11, RN10)",
+)
+def analisar_produto(
+    produto_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_atual),
+):
+    produto = _produto_monitorado_pelo_usuario(db, produto_id, usuario)
+    coletas = _coletas_validas(db, produto_id)
+    minimo = _analise_service.min_amostras_media
+
+    if not coletas:
+        # Sem nenhuma coleta válida não há o que comparar: não classifica (UC11, 3a).
+        return AnaliseProdutoOut(
+            produto_id=produto.id,
+            nome=produto.nome,
+            preco_atual=None,
+            media_historica=None,
+            amostras_media=0,
+            amostras_minimas=minimo,
+            variacao_percentual_anterior=None,
+            variacao_percentual_media=None,
+            classificacao=ClassificacaoQueda.SEM_DADOS,
+            queda_relevante=False,
+        )
+
+    # RN10: sem amostras suficientes o serviço devolve SEM_DADOS (não classifica queda).
+    r = _analise_service.classificar(coletas)
+
+    def _pct(v: float | None) -> float | None:
+        return None if v is None else round(v, 2)
+
+    return AnaliseProdutoOut(
+        produto_id=produto.id,
+        nome=produto.nome,
+        preco_atual=_duas_casas(r.preco_atual),
+        media_historica=_duas_casas(r.media_historica),
+        amostras_media=r.amostras_media,
+        amostras_minimas=minimo,
+        variacao_percentual_anterior=_pct(r.variacao_percentual_anterior),
+        variacao_percentual_media=_pct(r.variacao_percentual_media),
+        classificacao=r.classificacao,
+        queda_relevante=r.queda_relevante,
     )
