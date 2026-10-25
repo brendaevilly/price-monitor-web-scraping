@@ -24,7 +24,7 @@ Definição de paletas, tipografia e componentes-base: [Figma](https://www.figma
 Documentação complementar:
 
 - [ColetaService](docs/coleta-service.md)
-- [Coleta periódica (APScheduler)](docs/coleta-periodica.md)
+- [Coleta periódica e ciclo completo (APScheduler)](docs/coleta-periodica.md)
 - [AlertaService](docs/alerta-service.md)
 - [Testes manuais (RNF12)](docs/testes-manuais.md)
 
@@ -110,11 +110,14 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
-Preencha `backend/.env` e rode:
+Preencha `backend/.env`, crie as tabelas no Supabase (`backend/app/db_scripts/schema.sql`), cadastre as lojas do MVP e rode:
 
 ```powershell
+python -m app.seed_lojas
 uvicorn app.main:app --reload
 ```
+
+`python -m app.seed_lojas` é idempotente: cadastra Mercado Livre, Magazine Luiza, Amazon BR, Kabum e Books to Scrape (demo) se ainda não existirem.
 
 - Health check: http://127.0.0.1:8000/health
 - Swagger: http://127.0.0.1:8000/docs
@@ -132,9 +135,30 @@ npm run dev
 
 A interface sobe em http://127.0.0.1:5173. O axios aponta para `http://localhost:8000`. As telas de login e cadastro ainda estão no fluxo visual (issue #49 liga na API).
 
+## Fluxo de monitoramento (ponta a ponta)
+
+A cada intervalo (`COLETA_SCHEDULER_INTERVALO_MINUTOS`), o APScheduler roda o ciclo:
+
+```
+coleta (scraping) -> histórico de preços -> análise (média e coleta anterior) -> alerta -> e-mail
+```
+
+- Só coleta **válida** dispara análise e alerta (RN09).
+- Lojas com extrator próprio: Mercado Livre, Magazine Luiza, Amazon BR, Kabum e Books to Scrape (demo). As demais usam o extrator genérico (JSON-LD/meta tags). Detalhes em [ColetaService](docs/coleta-service.md).
+- Para ver o fluxo sem SMTP: `ALERTA_SMTP_DRY_RUN=true`. Para ver rápido: `COLETA_SCHEDULER_INTERVALO_SEGUNDOS=30` e `COLETA_SCHEDULER_EXECUTAR_NO_STARTUP=true`.
+
+## Testes automatizados
+
+```powershell
+cd backend
+python -m pytest test -q
+```
+
+Usam SQLite em memória (não precisam de Supabase nem de internet). O GitHub Actions também roda a suíte.
+
 ## Testes manuais (RNF12)
 
-Checklist dos fluxos críticos implementados até a Sprint 2. Marque cada item ao validar. Detalhes e evidências esperadas: [docs/testes-manuais.md](docs/testes-manuais.md).
+Checklist dos fluxos críticos implementados até a Sprint 3. Marque cada item ao validar. Detalhes e evidências esperadas: [docs/testes-manuais.md](docs/testes-manuais.md).
 
 | ID | Fluxo | Como validar | Resultado esperado |
 | --- | --- | --- | --- |
@@ -146,6 +170,9 @@ Checklist dos fluxos críticos implementados até a Sprint 2. Marque cada item a
 | TM06 | Recorrência curta | `COLETA_SCHEDULER_INTERVALO_SEGUNDOS=10` e `EXECUTAR_NO_STARTUP=true` | Logs `Iniciando coleta periódica` se repetem |
 | TM07 | Docker Compose | `docker compose up --build` | Backend `:8000` e frontend `:5173` sobem |
 | TM08 | Alerta dry-run (UC13) | `ALERTA_SMTP_DRY_RUN=true` e chamar `avaliarCondicoes` | Log `[dry-run]` sem SMTP real |
+| TM09 | Ciclo completo (#66) | Dry-run + coleta a cada 30 s com produto monitorado | Logs de coleta, análise e `[dry-run]`; registro em `alertas` |
+| TM10 | Coleta inválida (RN09) | Produto com URL 404 | Sem análise, sem alerta, histórico preservado |
+| TM11 | Segundo site (#67) | Produto do Magazine Luiza | Preço gravado em `historico_precos` |
 
 ## Modelo de desenvolvimento
 

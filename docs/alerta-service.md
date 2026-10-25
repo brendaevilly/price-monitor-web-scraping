@@ -79,4 +79,4 @@ SMTP_USAR_TLS=true
 
 ## Relação com os outros serviços
 
-O `AnaliseService` (issue #43) deve devolver um objeto compatível com `Analise`. O agendador de coleta (veja [coleta-periodica.md](./coleta-periodica.md)) ainda não chama o alerta; quando a análise existir, o fluxo fica: coleta → análise → `avaliarCondicoes`.
+O `AnaliseService` (issue #43) devolve um `ResultadoAnalise`, que o ciclo do agendador converte em `Analise` (`montar_analise_alerta`, em `ciclo_service.py`). Desde a issue #66 o agendador chama o alerta: coleta → histórico → análise → `avaliarCondicoes`, e só depois de uma coleta **válida** (RN09). Veja [coleta-periodica.md](./coleta-periodica.md).
