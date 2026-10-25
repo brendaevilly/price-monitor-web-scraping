@@ -1,17 +1,27 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_usuario_atual
+from app.models.historico_preco import HistoricoPreco
 from app.models.loja import Loja
 from app.models.monitoramento import Monitoramento
 from app.models.produto import Produto
 from app.models.usuario import Usuario
+from app.schemas.historico import ColetaPrecoOut, HistoricoProdutoOut
 from app.schemas.produto import ProdutoCreate, ProdutoMonitoradoOut
+from app.services.analise_service import AnaliseService
 from app.utils.urls import url_pertence_a_loja
 
 router = APIRouter(prefix="/produtos", tags=["Produto"])
+
+_MSG_NAO_ENCONTRADO = "Produto não encontrado."
+
+# RNF07: serviço sem estado de negócio, pode ser reaproveitado entre requisições.
+_analise_service = AnaliseService()
 
 
 def _montar_saida(produto: Produto, loja: Loja, mon: Monitoramento) -> ProdutoMonitoradoOut:
@@ -98,3 +108,66 @@ def listar_produtos(
         .order_by(Monitoramento.data_cadastro.desc())
     ).all()
     return [_montar_saida(p, l, m) for p, l, m in linhas]
+
+
+@router.get(
+    "/{produto_id}/historico",
+    response_model=HistoricoProdutoOut,
+    summary="Consultar histórico de preços do produto (RF12, RN09, RN10)",
+)
+def consultar_historico(
+    produto_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_atual),
+):
+    produto = db.get(Produto, produto_id)
+
+    # RNF03: só devolve histórico de produtos que o usuário monitora; não revela
+    # se o produto existe mas pertence/é monitorado só por outra pessoa.
+    monitora = db.scalar(
+        select(Monitoramento).where(
+            Monitoramento.usuario_id == usuario.id,
+            Monitoramento.produto_id == produto_id,
+        )
+    )
+    if produto is None or monitora is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, _MSG_NAO_ENCONTRADO)
+
+    # RN09: histórico é sempre de um único produto (filtro por produto_id,
+    # nunca misturado com o de outro) e só com coletas válidas, em ordem
+    # cronológica (mais antiga -> mais recente).
+    coletas = db.scalars(
+        select(HistoricoPreco)
+        .where(
+            HistoricoPreco.produto_id == produto_id,
+            HistoricoPreco.coleta_valida.is_(True),
+        )
+        .order_by(HistoricoPreco.data_hora_coleta.asc())
+    ).all()
+
+    if not coletas:
+        return HistoricoProdutoOut(
+            produto_id=produto.id,
+            nome=produto.nome,
+            url_produto=produto.url_produto,
+            coletas=[],
+            preco_atual=None,
+            menor_preco=None,
+            media_historica=None,
+            amostras_media=0,
+        )
+
+    # RN10: preço atual e média histórica (a média só vem preenchida quando há
+    # amostras suficientes, mesmo critério usado na análise de quedas - UC11).
+    resultado = _analise_service.classificar(coletas)
+
+    return HistoricoProdutoOut(
+        produto_id=produto.id,
+        nome=produto.nome,
+        url_produto=produto.url_produto,
+        coletas=[ColetaPrecoOut.model_validate(c) for c in coletas],
+        preco_atual=resultado.preco_atual,
+        menor_preco=min(c.preco for c in coletas),
+        media_historica=resultado.media_historica,
+        amostras_media=resultado.amostras_media,
+    )
