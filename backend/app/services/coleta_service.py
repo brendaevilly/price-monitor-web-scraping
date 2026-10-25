@@ -1,7 +1,9 @@
 """Robô de scraping de preços (RF06, RF07, RF08).
 
-Site do MVP: Mercado Livre. Também há extrator para books.toscrape.com
-(demonstração) e fallback genérico (JSON-LD / meta tags).
+Sites do MVP: Mercado Livre e Magazine Luiza. Também há extratores para
+Amazon BR e Kabum, para books.toscrape.com (demonstração) e um fallback
+genérico (JSON-LD / meta tags). Os extratores ficam num registro
+(`EXTRATORES`), escolhido pelo domínio da loja.
 
 A extração usa BeautifulSoup + Requests, respeita intervalo mínimo e
 limite de tentativas (RNF08) e persiste HistoricoPreco sem apagar
@@ -17,7 +19,7 @@ import threading
 import time
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import Optional
+from typing import Callable, Optional
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -178,31 +180,151 @@ def extrair_preco_generico(soup: BeautifulSoup, html: str) -> Optional[Decimal]:
     return extrair_preco_meta(soup)
 
 
+def _normalizar_dominio_bruto(dominio: str) -> str:
+    dominio = (dominio or "").strip().lower()
+    return dominio[4:] if dominio.startswith("www.") else dominio
+
+
 def identificar_dominio(produto: Produto, loja: Optional[Loja]) -> str:
+    """Domínio (minúsculo, sem 'www.') usado para escolher o extrator.
+
+    Prioriza o domínio da Loja cadastrada; sem loja, cai para o hostname da
+    URL do produto.
+    """
     if loja and loja.dominio:
-        return loja.dominio.lower()
-    hostname = urlparse(produto.url_produto).hostname or ""
-    return hostname.lower()
+        return _normalizar_dominio_bruto(loja.dominio)
+    hostname = urlparse(produto.url_produto or "").hostname or ""
+    return _normalizar_dominio_bruto(hostname)
 
 
-def extrair_preco_books_toscrape(soup: BeautifulSoup) -> Optional[Decimal]:
+def _extrair_por_seletores(soup: BeautifulSoup, seletores: tuple[str, ...]) -> Optional[Decimal]:
+    """Tenta cada seletor CSS e devolve o primeiro preço válido."""
+    for seletor in seletores:
+        elemento = soup.select_one(seletor)
+        if elemento is None:
+            continue
+        preco = normalizar_preco(elemento.get("content") or elemento.get_text(" ", strip=True))
+        if preco is not None:
+            return preco
+    return None
+
+
+def extrair_preco_books_toscrape(soup: BeautifulSoup, html: str = "") -> Optional[Decimal]:
     elemento = soup.select_one(".price_color")
     if elemento is None:
         return None
     return normalizar_preco(elemento.get_text())
 
 
+def extrair_preco_magazineluiza(soup: BeautifulSoup, html: str) -> Optional[Decimal]:
+    """Magazine Luiza: JSON-LD, meta tags e, por último, o bloco de preço da página."""
+    preco = extrair_preco_json_ld(html)
+    if preco is not None:
+        return preco
+    preco = extrair_preco_meta(soup)
+    if preco is not None:
+        return preco
+    return _extrair_por_seletores(
+        soup,
+        (
+            '[data-testid="price-value"]',
+            '[data-testid="price-default"]',
+            '[data-testid="product-price"]',
+        ),
+    )
+
+
+def extrair_preco_amazon(soup: BeautifulSoup, html: str) -> Optional[Decimal]:
+    """Amazon BR: JSON-LD/meta (raros) e o bloco `a-price` da página."""
+    preco = extrair_preco_json_ld(html)
+    if preco is not None:
+        return preco
+    preco = extrair_preco_meta(soup)
+    if preco is not None:
+        return preco
+    return _extrair_por_seletores(
+        soup,
+        (
+            "#corePrice_feature_div .a-price .a-offscreen",
+            "#corePriceDisplay_desktop_feature_div .a-price .a-offscreen",
+            "#apex_desktop .a-price .a-offscreen",
+            "span.a-price span.a-offscreen",
+            "#priceblock_ourprice",
+            "#priceblock_dealprice",
+        ),
+    )
+
+
+def extrair_preco_kabum(soup: BeautifulSoup, html: str) -> Optional[Decimal]:
+    """Kabum: JSON-LD, meta tags e a classe de preço final da página."""
+    preco = extrair_preco_json_ld(html)
+    if preco is not None:
+        return preco
+    preco = extrair_preco_meta(soup)
+    if preco is not None:
+        return preco
+    return _extrair_por_seletores(soup, ("h4.finalPrice", ".finalPrice", "#blocoValores .finalPrice"))
+
+
+@dataclass(frozen=True)
+class Extrator:
+    """Associa trechos de domínio a uma função de extração (RF07)."""
+
+    nome: str
+    dominios: tuple[str, ...]
+    funcao: Callable[[BeautifulSoup, str], Optional[Decimal]]
+
+    def atende(self, dominio: str) -> bool:
+        return any(trecho in dominio for trecho in self.dominios)
+
+
+# Para incluir outra loja: escreva `extrair_preco_<loja>(soup, html)`,
+# registre aqui e cadastre a Loja (ver app/seed_lojas.py).
+EXTRATORES: tuple[Extrator, ...] = (
+    Extrator("Mercado Livre", ("mercadolivre", "mercadolibre"), extrair_preco_mercadolivre),
+    Extrator("Magazine Luiza", ("magazineluiza", "magalu.com"), extrair_preco_magazineluiza),
+    Extrator("Amazon BR", ("amazon.com.br",), extrair_preco_amazon),
+    Extrator("Kabum", ("kabum.com.br",), extrair_preco_kabum),
+    Extrator("Books to Scrape (demo)", ("books.toscrape.com",), extrair_preco_books_toscrape),
+)
+
+
+def selecionar_extrator(dominio: str) -> Optional[Extrator]:
+    """Extrator específico do domínio, ou None (usa o fallback genérico)."""
+    dominio = _normalizar_dominio_bruto(dominio)
+    for extrator in EXTRATORES:
+        if extrator.atende(dominio):
+            return extrator
+    return None
+
+
+_MARCADORES_BLOQUEIO = (
+    "suspicious-traffic",
+    "gz-account-verification",
+    "/errors/validatecaptcha",  # Amazon: página de captcha
+    "digite os caracteres que você vê abaixo",
+)
+
+
 def _pagina_bloqueada(html: str) -> bool:
     html_lower = html.lower()
-    return "suspicious-traffic" in html_lower or "gz-account-verification" in html_lower
+    return any(marcador in html_lower for marcador in _MARCADORES_BLOQUEIO)
+
+
+def _erro_nao_retriavel(exc: Exception) -> bool:
+    """4xx permanentes (ex.: 404) não melhoram na próxima tentativa."""
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        codigo = exc.response.status_code
+        return 400 <= codigo < 500 and codigo not in {408, 429}
+    return False
 
 
 def extrair_preco(html: str, dominio: str) -> Optional[Decimal]:
+    """Escolhe o extrator pelo domínio da loja; sem extrator, usa o genérico."""
     soup = BeautifulSoup(html, "html.parser")
-    if "mercadolivre" in dominio or "mercadolibre" in dominio:
-        return extrair_preco_mercadolivre(soup, html)
-    if "books.toscrape.com" in dominio:
-        return extrair_preco_books_toscrape(soup)
+    extrator = selecionar_extrator(dominio)
+    if extrator is not None:
+        return extrator.funcao(soup, html)
     return extrair_preco_generico(soup, html)
 
 
@@ -285,15 +407,40 @@ class ColetaService:
                     produto.id,
                     ultimo_erro,
                 )
+                if _erro_nao_retriavel(exc):
+                    return self._registrar_falha(
+                        db, produto, tentativas=tentativa, erro=ultimo_erro
+                    )
                 if tentativa < max_tentativas:
                     self._aguardar_intervalo()
 
         return self._registrar_falha(db, produto, tentativas=max_tentativas, erro=ultimo_erro)
 
-    def executar_coleta_ativos(self, db: Session) -> list[ResultadoColeta]:
-        """Coleta todos os produtos ativos — ponto de entrada para o agendador (RF06)."""
+    def executar_coleta_ativos(
+        self,
+        db: Session,
+        ao_coletar: Optional[Callable[[Produto, ResultadoColeta], None]] = None,
+    ) -> list[ResultadoColeta]:
+        """Coleta todos os produtos ativos — ponto de entrada para o agendador (RF06).
+
+        `ao_coletar(produto, resultado)`, se informado, roda logo depois de cada
+        coleta (válida ou não). É por ele que o agendador encadeia análise e
+        alerta (issue #66). Erro no callback é registrado e não interrompe a
+        coleta dos demais produtos.
+        """
         produtos = db.query(Produto).filter(Produto.ativo.is_(True)).all()
-        return [self.executar_coleta(produto, db) for produto in produtos]
+        resultados: list[ResultadoColeta] = []
+        for produto in produtos:
+            resultado = self.executar_coleta(produto, db)
+            resultados.append(resultado)
+            if ao_coletar is not None:
+                try:
+                    ao_coletar(produto, resultado)
+                except Exception:
+                    logger.exception(
+                        "Falha no pós-processamento do produto %s.", produto.id
+                    )
+        return resultados
 
     def _requisitar(self, url: str) -> requests.Response:
         self._aguardar_intervalo()
