@@ -1,6 +1,6 @@
 # Testes manuais (RNF12)
 
-Registro dos testes manuais dos fluxos críticos implementados até a Sprint 2. Use este arquivo para marcar data, responsável e resultado.
+Registro dos testes manuais dos fluxos críticos implementados até a Sprint 3. Use este arquivo para marcar data, responsável e resultado.
 
 ## Ambiente
 
@@ -97,3 +97,44 @@ docker compose up --build
 **Esperado:** log `[dry-run]` com assunto e destinatário; nenhum SMTP real. Reexecução imediata do mesmo tipo não reenvia (RN08, RN11).  
 **Resultado:** [ ] passou  [ ] falhou  
 **Data / quem:**
+
+## TM09 — Ciclo completo coleta → análise → alerta (issue #66)
+
+Pré-requisito: `ALERTA_SMTP_DRY_RUN=true`, `COLETA_SCHEDULER_INTERVALO_SEGUNDOS=30`, `COLETA_SCHEDULER_EXECUTAR_NO_STARTUP=true`, um produto de `books.toscrape.com` monitorado com `alerta_ativo=true` e `preco_alvo` **acima** do preço da página.
+
+1. Suba a API e acompanhe o log.
+2. Confirme `Coleta válida do produto ...`, seguida de `Produto ...: <classificação>, N alerta(s) enviado(s)`.
+3. Confirme a linha `[dry-run] Alerta preco_alvo para ...` (e-mail simulado).
+4. Confirme na tabela `alertas` o registro criado.
+5. No ciclo seguinte, o log mostra o alerta como ignorado (anti-spam, RN08/RN11).
+
+**Esperado:** fluxo ponta a ponta sem intervenção manual.  
+**Resultado:** [ ] passou  [ ] falhou  
+**Data / quem:**
+
+## TM10 — Coleta inválida não dispara análise nem alerta (RN09)
+
+Troque a `url_produto` de um produto monitorado para uma página inexistente do mesmo domínio (404) e aguarde um ciclo.
+
+**Esperado:** log `coleta inválida, análise e alerta não executados (RN09)`; nenhum `[dry-run]` e nenhum `Alerta` novo; histórico anterior preservado.  
+**Resultado:** [ ] passou  [ ] falhou  
+**Data / quem:**
+
+## TM11 — Segundo site do MVP: Magazine Luiza (issue #67)
+
+1. Rode `python -m app.seed_lojas` e confirme a loja `magazineluiza.com.br` (via `GET /lojas`).
+2. Cadastre um produto com a URL de uma página de produto do Magazine Luiza e a loja correspondente (`POST /produtos`).
+3. Aguarde um ciclo ou chame `ColetaService().executarColeta(produto, db)`.
+
+**Esperado:** novo registro em `historico_precos` com o preço da página (`coleta_valida=true`). Se o site bloquear o robô, o registro sai com `coleta_valida=false` e o log explica o motivo.  
+**Resultado:** [ ] passou  [ ] falhou  
+**Data / quem:**
+
+## Testes automatizados
+
+```powershell
+cd backend
+python -m pytest test -q
+```
+
+Cobrem análise, ciclo completo (`test_ciclo_service.py`), extratores por loja (`test_extratores.py`), URLs, lojas, produtos e monitoramentos. Rodam em SQLite em memória, sem Supabase e sem internet.

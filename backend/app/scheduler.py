@@ -1,4 +1,4 @@
-"""Agendamento da coleta periódica com APScheduler (RF06)."""
+"""Agendamento do ciclo coleta -> análise -> alerta com APScheduler (RF06)."""
 
 from __future__ import annotations
 
@@ -18,19 +18,25 @@ agendador = BackgroundScheduler(timezone="America/Sao_Paulo")
 
 
 def executar_coleta_periodica() -> None:
-    """Job do APScheduler: coleta todos os produtos ativos sem intervenção manual."""
+    """Job do APScheduler: coleta -> histórico -> análise -> alerta (RF06, issue #66).
+
+    Depois de cada coleta válida roda a análise e a avaliação de alertas do
+    produto; coleta inválida não dispara nenhum dos dois (RN09).
+    """
     from app.database import SessionLocal
-    from app.services.coleta_service import ColetaService
+    from app.services.ciclo_service import CicloMonitoramentoService
 
     logger.info("Iniciando coleta periódica de produtos ativos.")
     db = SessionLocal()
     try:
-        resultados = ColetaService().executar_coleta_ativos(db)
-        validas = sum(1 for item in resultados if item.coleta_valida)
+        ciclo = CicloMonitoramentoService().executar_ciclo(db)
         logger.info(
-            "Coleta periódica concluída: %s produto(s), %s válida(s).",
-            len(resultados),
-            validas,
+            "Coleta periódica concluída: %s produto(s), %s válida(s), "
+            "%s analisado(s), %s alerta(s) enviado(s).",
+            len(ciclo.produtos),
+            ciclo.validas,
+            ciclo.analisados,
+            ciclo.alertas_enviados,
         )
     except Exception:
         logger.exception("Falha na coleta periódica.")
