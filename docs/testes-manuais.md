@@ -135,7 +135,7 @@ Pré-requisito: `ALERTA_SMTP_DRY_RUN=true`, `COLETA_SCHEDULER_INTERVALO_SEGUNDOS
 5. No ciclo seguinte, o log mostra o alerta como ignorado (anti-spam, RN08/RN11).
 
 **Esperado:** fluxo ponta a ponta sem intervenção manual.  
-**Resultado:** [ ] passou  [ ] falhou  
+**Resultado:** [ ] passou [ ] falhou  
 **Data / quem:**
 
 ## TM10 — Coleta inválida não dispara análise nem alerta (RN09)
@@ -143,7 +143,7 @@ Pré-requisito: `ALERTA_SMTP_DRY_RUN=true`, `COLETA_SCHEDULER_INTERVALO_SEGUNDOS
 Troque a `url_produto` de um produto monitorado para uma página inexistente do mesmo domínio (404) e aguarde um ciclo.
 
 **Esperado:** log `coleta inválida, análise e alerta não executados (RN09)`; nenhum `[dry-run]` e nenhum `Alerta` novo; histórico anterior preservado.  
-**Resultado:** [ ] passou  [ ] falhou  
+**Resultado:** [ ] passou [ ] falhou  
 **Data / quem:**
 
 ## TM11 — Segundo site do MVP: Magazine Luiza (issue #67)
@@ -153,7 +153,7 @@ Troque a `url_produto` de um produto monitorado para uma página inexistente do 
 3. Aguarde um ciclo ou chame `ColetaService().executarColeta(produto, db)`.
 
 **Esperado:** novo registro em `historico_precos` com o preço da página (`coleta_valida=true`). Se o site bloquear o robô, o registro sai com `coleta_valida=false` e o log explica o motivo.  
-**Resultado:** [ ] passou  [ ] falhou  
+**Resultado:** [ ] passou [ ] falhou  
 **Data / quem:**
 
 ## Testes automatizados
@@ -164,3 +164,12 @@ python -m pytest test -q
 ```
 
 Cobrem análise, ciclo completo (`test_ciclo_service.py`), extratores por loja (`test_extratores.py`), URLs, lojas, produtos e monitoramentos. Rodam em SQLite em memória, sem Supabase e sem internet.
+
+## TM11 — Parar de monitorar produto (RF17, RN05)
+
+1. Com um produto monitorado e coletas em `historico_precos`, chame `DELETE /monitoramentos/{id}`
+2. Chame `GET /produtos`, confira `produtos.ativo` e a contagem de `historico_precos` no Supabase
+
+**Esperado:** HTTP 204; o produto some da lista; `ativo = false` se ninguém mais monitora; histórico intacto. Repetir o DELETE responde 404.  
+**Resultado:** [ ] passou [ ] falhou  
+**Data / quem:**

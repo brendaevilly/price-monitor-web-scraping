@@ -1,7 +1,7 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -106,3 +106,33 @@ def atualizar_monitoramento(
     produto = db.get(Produto, monitoramento.produto_id)
     loja = db.get(Loja, produto.loja_id)
     return _montar_saida(produto, loja, monitoramento)
+
+@router.delete(
+    "/{monitoramento_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Parar de monitorar um produto (RF17, RN05)",
+)
+def remover_monitoramento(
+    monitoramento_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_atual),
+):
+    monitoramento = _buscar_do_usuario(db, monitoramento_id, usuario.id)
+    produto_id = monitoramento.produto_id
+
+    # Remove só o vínculo do usuário. O Produto e o HistoricoPreco ficam (RN05):
+    # o histórico é do produto, compartilhado, e some só se o produto for apagado.
+    db.delete(monitoramento)
+    db.flush()
+
+    # Se ninguém mais monitora, o robô para de coletar o produto (RF06 só lê ativos).
+    restantes = db.scalar(
+        select(func.count()).select_from(Monitoramento).where(Monitoramento.produto_id == produto_id)
+    )
+    if restantes == 0:
+        produto = db.get(Produto, produto_id)
+        if produto is not None:
+            produto.ativo = False
+
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
