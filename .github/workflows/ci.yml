@@ -26,6 +26,9 @@ jobs:
       - name: Syntax check
         run: python -m compileall -q app
 
+      - name: Tests
+        run: python -m pytest test -q
+
   frontend:
     runs-on: ubuntu-latest
     defaults:
