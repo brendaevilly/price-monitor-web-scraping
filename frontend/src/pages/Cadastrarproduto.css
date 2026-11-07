@@ -1,0 +1,23 @@
+.cp-pagina { max-width: 540px; margin: 0 auto; padding: 8px 24px 48px; color: #0f172a; }
+.cp-voltar { background: none; border: 0; padding: 4px 0; color: #2563eb; font: inherit; font-size: 14px; cursor: pointer; }
+.cp-titulo { margin: 24px 0 2px; font-size: 20px; font-weight: 600; }
+.cp-sub { margin: 0 0 20px; font-size: 12px; color: #64748b; }
+.cp-card { background: #fff; border-radius: 12px; padding: 20px 28px 28px; box-shadow: 0 1px 6px rgba(15, 23, 42, .12); }
+.cp-campo { margin-bottom: 14px; }
+.cp-rotulo { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; }
+.cp-obrigatorio { color: #dc2626; }
+.cp-opcional { font-weight: 400; font-size: 11px; color: #94a3b8; }
+.cp-input { width: 100%; box-sizing: border-box; height: 32px; padding: 0 12px; font: inherit; font-size: 13px;
+  border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .1); }
+.cp-input::placeholder { color: #94a3b8; }
+.cp-input:focus { outline: 2px solid transparent; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, .18); }
+.cp-input[aria-invalid='true'] { border-color: #dc2626; }
+.cp-input:disabled { background: #f8fafc; }
+.cp-erro { margin: 4px 0 0; font-size: 12px; color: #dc2626; }
+.cp-erro-geral { margin: 0 0 14px; padding: 8px 12px; font-size: 13px; color: #991b1b; background: #fef2f2; border-radius: 8px; }
+.cp-sucesso { margin: 0 0 14px; padding: 8px 12px; font-size: 13px; color: #166534; background: #f0fdf4; border-radius: 8px; }
+.cp-botao { display: block; width: 270px; max-width: 100%; margin: 20px auto 0; height: 32px; border: 0; border-radius: 999px;
+  background: #2563eb; color: #fff; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.cp-botao:hover:not(:disabled) { background: #1d4ed8; }
+.cp-botao:focus-visible { outline: 3px solid rgba(37, 99, 235, .4); outline-offset: 2px; }
+.cp-botao:disabled { opacity: .65; cursor: wait; }
