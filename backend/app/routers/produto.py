@@ -2,7 +2,7 @@ import uuid
 from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import Row, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -121,24 +121,33 @@ def _duas_casas(valor: Decimal | None) -> Decimal | None:
 def _produto_monitorado_pelo_usuario(db: Session, produto_id: uuid.UUID, usuario: Usuario) -> Produto:
     """RNF03: só dá acesso a produtos que o usuário monitora; não revela se o
     produto existe mas é monitorado só por outra pessoa."""
-    produto = db.get(Produto, produto_id)
-    monitora = db.scalar(
-        select(Monitoramento).where(
-            Monitoramento.usuario_id == usuario.id,
-            Monitoramento.produto_id == produto_id,
-        )
+    # Uma única consulta (JOIN) em vez de duas: o filtro por usuário vai junto (RNF01).
+    produto = db.scalar(
+        select(Produto)
+        .join(Monitoramento, Monitoramento.produto_id == Produto.id)
+        .where(Produto.id == produto_id, Monitoramento.usuario_id == usuario.id)
     )
-    if produto is None or monitora is None:
+    if produto is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, _MSG_NAO_ENCONTRADO)
     return produto
 
 
-def _coletas_validas(db: Session, produto_id: uuid.UUID) -> list[HistoricoPreco]:
+def _coletas_validas(db: Session, produto_id: uuid.UUID) -> list[Row]:
     """RN09: só coletas deste produto (nunca mistura com outro) e só válidas,
-    da mais antiga para a mais recente."""
+    da mais antiga para a mais recente.
+
+    RNF01: usa o índice idx_historico_produto (produto_id, data_hora_coleta) e
+    carrega só as colunas que o histórico e a análise usam, como linhas leves em
+    vez de objetos ORM completos: com milhares de coletas, isso corta o tempo de
+    resposta em mais da metade. As linhas expõem preco, data_hora_coleta e
+    coleta_valida por atributo, que é o que AnaliseService e ColetaPrecoOut leem."""
     return list(
-        db.scalars(
-            select(HistoricoPreco)
+        db.execute(
+            select(
+                HistoricoPreco.preco,
+                HistoricoPreco.data_hora_coleta,
+                HistoricoPreco.coleta_valida,
+            )
             .where(
                 HistoricoPreco.produto_id == produto_id,
                 HistoricoPreco.coleta_valida.is_(True),

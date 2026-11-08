@@ -1,13 +1,30 @@
 import os
+from pathlib import Path
+
 from dotenv import load_dotenv
 
-load_dotenv()
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+# utf-8-sig remove o BOM que o Bloco de Notas do Windows coloca no .env
+load_dotenv(_BACKEND_DIR / ".env", encoding="utf-8-sig")
+
+
+def _env(nome: str, padrao: str = "") -> str:
+    return os.getenv(nome, padrao).strip().strip('"').strip("'")
+
+
+def _supabase_url() -> str:
+    """Aceita a URL do projeto, mesmo se vier com /rest/v1 colado do painel."""
+    url = _env("SUPABASE_URL").rstrip("/")
+    for sufixo in ("/rest/v1", "/auth/v1", "/storage/v1"):
+        if url.endswith(sufixo):
+            url = url[: -len(sufixo)]
+    return url.rstrip("/")
 
 
 class Settings:
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "")
-    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
-    SUPABASE_SECRET_KEY: str = os.getenv("SUPABASE_SECRET_KEY", "")
+    DATABASE_URL: str = _env("DATABASE_URL")
+    SUPABASE_URL: str = _supabase_url()
+    SUPABASE_SECRET_KEY: str = _env("SUPABASE_SECRET_KEY")
 
     # RNF08 — intervalo mínimo entre requisições e limite de tentativas do robô
     COLETA_INTERVALO_MINIMO_SEGUNDOS: float = float(

@@ -27,6 +27,7 @@ Documentação complementar:
 - [Coleta periódica e ciclo completo (APScheduler)](docs/coleta-periodica.md)
 - [AlertaService](docs/alerta-service.md)
 - [Testes manuais (RNF12)](docs/testes-manuais.md)
+- [Desempenho das rotas principais (RNF01)](docs/desempenho.md)
 
 ## Variáveis de ambiente
 
