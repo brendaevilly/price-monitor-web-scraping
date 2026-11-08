@@ -1,7 +1,7 @@
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import Row, select
 from sqlalchemy.orm import Session
 
@@ -205,12 +205,19 @@ def consultar_historico(
 )
 def analisar_produto(
     produto_id: uuid.UUID,
+    janela_dias: int | None = Query(
+        default=None,
+        ge=0,
+        le=3650,
+        description="Janela da média em dias (0 = todo o histórico). Omitido: usa ANALISE_JANELA_DIAS.",
+    ),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
 ):
     produto = _produto_monitorado_pelo_usuario(db, produto_id, usuario)
     coletas = _coletas_validas(db, produto_id)
     minimo = _analise_service.min_amostras_media
+    janela = _analise_service.janela_dias if janela_dias is None else janela_dias
 
     if not coletas:
         # Sem nenhuma coleta válida não há o que comparar: não classifica (UC11, 3a).
@@ -225,10 +232,11 @@ def analisar_produto(
             variacao_percentual_media=None,
             classificacao=ClassificacaoQueda.SEM_DADOS,
             queda_relevante=False,
+            janela_dias=janela,
         )
 
     # RN10: sem amostras suficientes o serviço devolve SEM_DADOS (não classifica queda).
-    r = _analise_service.classificar(coletas)
+    r = _analise_service.classificar(coletas, janela_dias=janela)
 
     def _pct(v: float | None) -> float | None:
         return None if v is None else round(v, 2)
@@ -244,4 +252,5 @@ def analisar_produto(
         variacao_percentual_media=_pct(r.variacao_percentual_media),
         classificacao=r.classificacao,
         queda_relevante=r.queda_relevante,
+        janela_dias=r.janela_dias,
     )

@@ -10,6 +10,7 @@ from app.scheduler import iniciar_agendador, parar_agendador, status_agendador
 from app.routers import loja as loja_router
 from app.routers import produto as produto_router
 from app.routers import monitoramento as monitoramento_router
+from app.routers import analise as analise_router
 
 Base.metadata.create_all(bind=engine)
 
@@ -39,3 +40,4 @@ app.include_router(loja_router.router)
 app.include_router(produto_router.router)
 app.include_router(monitoramento_router.router)
 app.include_router(alerta_router.router)
+app.include_router(analise_router.router)
