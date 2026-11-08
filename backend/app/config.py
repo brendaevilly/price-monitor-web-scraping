@@ -48,6 +48,24 @@ class Settings:
         "COLETA_SCHEDULER_EXECUTAR_NO_STARTUP", "false"
     ).strip().lower() in {"1", "true", "yes", "sim", "on"}
 
+    # RN06 / RN09 / RN10 / UC11 — análise estatística do histórico
+    # Faixas de queda sobre a média histórica: pequena >= 5%, relevante >= 10%, grande >= 20%
+    ANALISE_LIMIAR_PEQUENA_PERCENTUAL: float = float(
+        os.getenv("ANALISE_LIMIAR_PEQUENA_PERCENTUAL", "5")
+    )
+    ANALISE_LIMIAR_RELEVANTE_PERCENTUAL: float = float(
+        os.getenv("ANALISE_LIMIAR_RELEVANTE_PERCENTUAL", "10")
+    )
+    ANALISE_LIMIAR_GRANDE_PERCENTUAL: float = float(
+        os.getenv("ANALISE_LIMIAR_GRANDE_PERCENTUAL", "20")
+    )
+    # Mínimo de coletas anteriores válidas para comparar (RN10)
+    ANALISE_MIN_COLETAS_COMPARACAO: int = int(
+        os.getenv("ANALISE_MIN_COLETAS_COMPARACAO", "3")
+    )
+    # Janela da média histórica em dias (0 = todo o histórico)
+    ANALISE_JANELA_DIAS: int = int(os.getenv("ANALISE_JANELA_DIAS", "30"))
+
     # RF15 / RF16 — alerta por e-mail (RN07, RN08, RN11)
     ALERTA_QUEDA_MINIMA_PERCENTUAL: float = float(
         os.getenv("ALERTA_QUEDA_MINIMA_PERCENTUAL", "5")
