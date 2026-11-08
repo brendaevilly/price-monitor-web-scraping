@@ -9,7 +9,8 @@ import {
   urlPertenceALoja,
   validarUrlProduto,
 } from '../utils/produto';
-import './CadastrarProduto.css';
+import "./Cadastrarproduto.css";
+
 
 const msgLojaNaoIdentificada = (loja) =>
   `A URL não pertence à loja "${loja.nome}" (${loja.dominio}). Confira o nome da loja ou o link.`;
