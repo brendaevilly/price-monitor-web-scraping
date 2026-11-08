@@ -5,7 +5,8 @@ import AppLayout from './components/AppLayout';
 import Login from './pages/Login';
 import Cadastro from './pages/Cadastro';
 import Dashboard from './pages/Dashboard';
-import CadastrarProduto from './pages/CadastrarProduto';
+import CadastrarProduto from "./pages/Cadastrarproduto";
+
 
 function App() {
   return (
