@@ -37,9 +37,10 @@ CREATE TABLE monitoramentos (
 CREATE TABLE historico_precos (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     produto_id UUID NOT NULL REFERENCES produtos(id) ON DELETE CASCADE,
-    preco NUMERIC(10,2) NOT NULL,
+    preco NUMERIC(10,2),  -- NULL em coleta inválida (RN09, RN14)
     data_hora_coleta TIMESTAMPTZ NOT NULL DEFAULT now(),
-    coleta_valida BOOLEAN NOT NULL DEFAULT true
+    coleta_valida BOOLEAN NOT NULL DEFAULT true,
+    CONSTRAINT ck_historico_preco_valido CHECK (NOT coleta_valida OR (preco IS NOT NULL AND preco > 0))
 );
 
 -- Alerta

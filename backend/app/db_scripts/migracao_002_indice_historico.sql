@@ -4,8 +4,8 @@
 -- script seguro de rodar mais de uma vez.
 --
 -- Atende as consultas de histórico (GET /produtos/{id}/historico), análise
--- (GET /produtos/{id}/analise), pós-coleta (CicloService) e "última coleta"
--- (ColetaService), todas com WHERE produto_id = ? ORDER BY data_hora_coleta.
+-- (GET /produtos/{id}/analise) e pós-coleta (CicloService), todas com
+-- WHERE produto_id = ? ORDER BY data_hora_coleta.
 CREATE INDEX IF NOT EXISTS idx_historico_produto
     ON historico_precos (produto_id, data_hora_coleta);
 
