@@ -3,12 +3,13 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database import get_db, supabase
 from app.models.usuario import Usuario
 from app.schemas.usuario import LoginOut, UsuarioCreate, UsuarioLogin, UsuarioOut
+from app.utils.erros import eh_indisponibilidade, mascarar_email
 
 router = APIRouter(prefix="/usuarios", tags=["Usuario"])
 logger = logging.getLogger(__name__)
@@ -17,11 +18,16 @@ _MSG_CREDENCIAIS_INVALIDAS = "E-mail ou senha incorretos."
 _MSG_EMAIL_DUPLICADO = "Já existe um usuário cadastrado com este e-mail."
 _MSG_EMAIL_NAO_CONFIRMADO = (
     "E-mail ainda não confirmado. Verifique sua caixa de entrada "
-    "ou desative 'Confirm email' no Supabase (Authentication > Providers > Email)."
+    "e confirme o cadastro antes de entrar."
 )
+_MSG_INDISPONIVEL = (
+    "Não foi possível concluir a operação agora. Tente novamente em instantes."
+)
+_MSG_FALHA_CADASTRO = "Não foi possível concluir o cadastro. Tente novamente em instantes."
 
 
 def _conflito_email() -> HTTPException:
+    logger.info("Cadastro recusado: e-mail já cadastrado.")
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail=_MSG_EMAIL_DUPLICADO,
@@ -39,6 +45,12 @@ def _salvar_usuario_dominio(db: Session, user_id, nome: str) -> Usuario:
     except IntegrityError:
         db.rollback()
         raise _conflito_email()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Falha de persistência ao salvar o usuário %s.", user_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_MSG_FALHA_CADASTRO
+        )
     db.refresh(novo)
     return novo
 
@@ -79,7 +91,7 @@ def _criar_no_auth(email: str, senha: str):
         if user is not None and getattr(user, "id", None):
             return user
     except Exception as exc:
-        mensagem = str(exc).lower()
+        mensagem = "" if eh_indisponibilidade(exc) else str(exc).lower()
         if "invalid" in mensagem and "email" in mensagem:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -91,15 +103,24 @@ def _criar_no_auth(email: str, senha: str):
                 _confirmar_email(existente.id)
                 return existente
             raise _conflito_email()
-        logger.exception("Falha ao criar usuário no Supabase Auth")
+        logger.exception(
+            "Falha ao criar usuário no serviço de autenticação (e-mail %s).",
+            mascarar_email(email),
+        )
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Erro ao cadastrar no Supabase Auth: {exc}",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+            if eh_indisponibilidade(exc)
+            else status.HTTP_502_BAD_GATEWAY,
+            detail=_MSG_FALHA_CADASTRO,
         )
 
+    logger.error(
+        "Serviço de autenticação não devolveu o usuário criado (e-mail %s).",
+        mascarar_email(email),
+    )
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
-        detail="Supabase Auth não retornou o usuário criado.",
+        detail=_MSG_FALHA_CADASTRO,
     )
 
 
@@ -137,6 +158,14 @@ def login(dados: UsuarioLogin, db: Session = Depends(get_db)):
     try:
         auth_response = _entrar(email_normalizado, dados.senha)
     except Exception as exc:
+        if eh_indisponibilidade(exc):
+            logger.error(
+                "Login impossível: serviço de autenticação indisponível (%s).",
+                type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_MSG_INDISPONIVEL
+            )
         mensagem = str(exc).lower()
         auth_existente = _buscar_auth_por_email(email_normalizado)
         confirmado = bool(getattr(auth_existente, "email_confirmed_at", None)) if auth_existente else True
@@ -145,16 +174,28 @@ def login(dados: UsuarioLogin, db: Session = Depends(get_db)):
             try:
                 auth_response = _entrar(email_normalizado, dados.senha)
             except Exception:
+                logger.warning(
+                    "Falha de autenticação no login: e-mail não confirmado (%s).",
+                    mascarar_email(email_normalizado),
+                )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=_MSG_EMAIL_NAO_CONFIRMADO,
                 )
         elif "email not confirmed" in mensagem:
+            logger.warning(
+                "Falha de autenticação no login: e-mail não confirmado (%s).",
+                mascarar_email(email_normalizado),
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=_MSG_EMAIL_NAO_CONFIRMADO,
             )
         else:
+            logger.warning(
+                "Falha de autenticação no login: credenciais recusadas (%s).",
+                mascarar_email(email_normalizado),
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=_MSG_CREDENCIAIS_INVALIDAS,
@@ -163,6 +204,10 @@ def login(dados: UsuarioLogin, db: Session = Depends(get_db)):
     sessao = auth_response.session
     auth_user = auth_response.user
     if sessao is None or auth_user is None:
+        logger.warning(
+            "Falha de autenticação no login: sem sessão devolvida (%s).",
+            mascarar_email(email_normalizado),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=_MSG_CREDENCIAIS_INVALIDAS,
@@ -175,6 +220,10 @@ def login(dados: UsuarioLogin, db: Session = Depends(get_db)):
         except (TypeError, ValueError):
             usuario = None
     if usuario is None:
+        logger.warning(
+            "Falha de autenticação no login: usuário %s sem cadastro na tabela usuarios.",
+            auth_user.id,
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cadastro do usuário incompleto na plataforma.",

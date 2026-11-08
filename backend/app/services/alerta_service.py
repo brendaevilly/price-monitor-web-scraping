@@ -15,6 +15,7 @@ from email.message import EmailMessage
 from typing import Optional
 from uuid import UUID
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -22,6 +23,7 @@ from app.models.alerta import Alerta
 from app.models.monitoramento import Monitoramento
 from app.models.produto import Produto
 from app.models.usuario import Usuario
+from app.utils.erros import mascarar_email
 
 logger = logging.getLogger(__name__)
 
@@ -167,15 +169,30 @@ class AlertaService:
                     self.enviar_email(alerta, destinatario, produto, nome_usuario)
                 except Exception:
                     logger.exception(
-                        "Falha ao enviar e-mail de alerta %s do produto %s.",
+                        "Falha no envio do e-mail de alerta %s (produto %s, usuário %s).",
                         tipo,
                         produto.id,
+                        monitoramento.usuario_id,
                     )
                     continue
 
-                db.add(alerta)
-                db.commit()
-                db.refresh(alerta)
+                # O e-mail já saiu. Se o registro não for gravado, os demais usuários
+                # do produto ainda devem ser avaliados, e o problema precisa aparecer no log.
+                try:
+                    db.add(alerta)
+                    db.commit()
+                    db.refresh(alerta)
+                except SQLAlchemyError:
+                    db.rollback()
+                    logger.exception(
+                        "Falha de persistência: e-mail de alerta %s foi enviado, mas o "
+                        "registro não foi gravado (produto %s, usuário %s). "
+                        "Pode haver reenvio no próximo ciclo.",
+                        tipo,
+                        produto.id,
+                        monitoramento.usuario_id,
+                    )
+                    continue
                 criados.append(alerta)
 
         return ResultadoAvaliacao(alertas=criados, ignorados=ignorados)
@@ -192,11 +209,10 @@ class AlertaService:
 
         if settings.ALERTA_SMTP_DRY_RUN:
             logger.info(
-                "[dry-run] Alerta %s para %s | %s | %s",
+                "[dry-run] Alerta %s para %s | %s",
                 alerta.tipo,
-                destinatario,
+                mascarar_email(destinatario),
                 assunto,
-                corpo,
             )
             return
 
@@ -218,7 +234,7 @@ class AlertaService:
                 servidor.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
             servidor.send_message(mensagem)
 
-        logger.info("E-mail de alerta %s enviado para %s.", alerta.tipo, destinatario)
+        logger.info("E-mail de alerta %s enviado para %s.", alerta.tipo, mascarar_email(destinatario))
 
     def _queda_dispara_alerta(self, analise: Analise) -> bool:
         if getattr(analise, "houve_queda_relevante", False):

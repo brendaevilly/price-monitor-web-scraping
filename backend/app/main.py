@@ -1,8 +1,12 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import settings
 from app.database import Base, engine
+from app.errors import registrar_tratadores
+from app.logging_config import configurar_logging
 from app.models import alerta, historico_preco, loja, monitoramento, produto, usuario  # noqa: F401
 from app.routers import usuario as usuario_router
 from app.routers import alerta as alerta_router
@@ -11,6 +15,8 @@ from app.routers import loja as loja_router
 from app.routers import produto as produto_router
 from app.routers import monitoramento as monitoramento_router
 from app.routers import analise as analise_router
+
+configurar_logging()
 
 Base.metadata.create_all(bind=engine)
 
@@ -27,6 +33,16 @@ app = FastAPI(
     description="Plataforma de monitoramento de preços via web scraping.",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+registrar_tratadores(app)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=False,  # autenticação é por cabeçalho Bearer, sem cookies
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 

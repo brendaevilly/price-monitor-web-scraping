@@ -25,6 +25,7 @@ from uuid import UUID
 
 import requests
 from bs4 import BeautifulSoup
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -373,6 +374,17 @@ def _mensagem_layout_alterado(produto: Produto, loja: Optional[Loja], dominio: s
     )
 
 
+def _id_sem_consulta(produto: Produto) -> UUID:
+    """Chave primária sem ir ao banco (o objeto pode estar expirado após rollback)."""
+    identidade = sa_inspect(produto).identity
+    return identidade[0] if identidade else produto.id
+
+
+def _url_sem_consulta(produto: Produto) -> str:
+    """URL só se já estiver carregada; nunca dispara consulta durante o tratamento de falha."""
+    return produto.__dict__.get("url_produto") or "(URL indisponível)"
+
+
 def _rollback_seguro(db: Session) -> None:
     """Desfaz a transação sem deixar o próprio rollback propagar erro."""
     try:
@@ -474,6 +486,7 @@ class ColetaService:
     ) -> ResultadoColeta:
         """Grava a coleta válida. Falha de banco vira coleta inválida, não exceção."""
         produto_id = produto.id
+        url_produto = produto.url_produto  # lido já: depois de um rollback o objeto expira
         try:
             historico = HistoricoPreco(
                 produto_id=produto_id,
@@ -494,8 +507,11 @@ class ColetaService:
                 db,
                 produto,
                 tentativas=tentativa,
-                erro=f"Preço extraído, mas não foi possível gravar no banco: {exc}",
+                # Só o tipo do erro: a mensagem do driver traz host/usuário do banco.
+                erro=f"Preço extraído, mas não foi possível gravar no banco ({type(exc).__name__}).",
                 motivo=MOTIVO_BANCO,
+                produto_id=produto_id,
+                url=url_produto,
             )
         logger.info(
             "Coleta válida do produto %s: R$ %s (tentativa %s)",
@@ -545,7 +561,7 @@ class ColetaService:
                     preco=None,
                     coleta_valida=False,
                     tentativas=0,
-                    erro=f"Erro inesperado na coleta: {exc}",
+                    erro=f"Erro inesperado na coleta ({type(exc).__name__}).",
                     motivo_falha=MOTIVO_INESPERADO,
                 )
             resultados.append(resultado)
@@ -588,6 +604,8 @@ class ColetaService:
         tentativas: int,
         erro: str,
         motivo: str = MOTIVO_INESPERADO,
+        produto_id: Optional[UUID] = None,
+        url: Optional[str] = None,
     ) -> ResultadoColeta:
         """Registra a falha sem apagar o histórico anterior e sem inventar preço.
 
@@ -596,8 +614,10 @@ class ColetaService:
         falhou. Se nem isso puder ser gravado, o erro é logado e a coleta segue
         sem exceção, para não derrubar os outros produtos.
         """
-        produto_id = produto.id
-        url = produto.url_produto
+        if produto_id is None:
+            produto_id = _id_sem_consulta(produto)
+        if url is None:
+            url = _url_sem_consulta(produto)
         historico_id = None
         try:
             historico = HistoricoPreco(
