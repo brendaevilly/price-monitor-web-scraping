@@ -43,6 +43,34 @@ USER_AGENT = (
 _RE_DIGITO_PRECO = re.compile(r"[^\d,.]")
 
 
+# Motivos de falha de coleta (ResultadoColeta.motivo_falha e logs).
+MOTIVO_LAYOUT = "layout_alterado"   # a página veio, mas o extrator não achou o preço
+MOTIVO_BLOQUEIO = "bloqueio"        # captcha / verificação de tráfego
+MOTIVO_HTTP = "http"                # resposta 4xx/5xx
+MOTIVO_REDE = "rede"                # timeout, DNS, conexão recusada
+MOTIVO_SEM_URL = "sem_url"
+MOTIVO_BANCO = "banco"              # preço extraído, mas não foi possível gravar
+MOTIVO_INESPERADO = "inesperado"
+
+
+class FalhaColeta(Exception):
+    """Falha de coleta com motivo classificado (para log e ResultadoColeta)."""
+
+    def __init__(self, motivo: str, mensagem: str):
+        super().__init__(mensagem)
+        self.motivo = motivo
+
+
+def _classificar_falha(exc: Exception) -> str:
+    if isinstance(exc, FalhaColeta):
+        return exc.motivo
+    if isinstance(exc, requests.HTTPError):
+        return MOTIVO_HTTP
+    if isinstance(exc, requests.RequestException):
+        return MOTIVO_REDE
+    return MOTIVO_INESPERADO
+
+
 @dataclass
 class ResultadoColeta:
     sucesso: bool
@@ -52,6 +80,7 @@ class ResultadoColeta:
     tentativas: int
     historico_id: Optional[UUID] = None
     erro: Optional[str] = None
+    motivo_falha: Optional[str] = None
 
 
 def normalizar_preco(valor: str | int | float | Decimal | None) -> Optional[Decimal]:
@@ -328,6 +357,30 @@ def extrair_preco(html: str, dominio: str) -> Optional[Decimal]:
     return extrair_preco_generico(soup, html)
 
 
+def _mensagem_layout_alterado(produto: Produto, loja: Optional[Loja], dominio: str) -> str:
+    """Mensagem para quando a página veio mas o extrator não achou o preço.
+
+    Tipicamente a loja mudou o HTML. Diz qual loja, qual extrator e onde olhar,
+    para quem lê o log saber que o problema é o seletor, não a rede.
+    """
+    extrator = selecionar_extrator(dominio)
+    nome_extrator = extrator.nome if extrator else "genérico (JSON-LD/meta tags)"
+    nome_loja = loja.nome if loja else dominio
+    return (
+        f"Layout alterado? O extrator '{nome_extrator}' não encontrou o preço na página "
+        f"do produto ({produto.url_produto}, loja '{nome_loja}'). O HTML da loja "
+        "provavelmente mudou: revise os seletores em coleta_service.EXTRATORES."
+    )
+
+
+def _rollback_seguro(db: Session) -> None:
+    """Desfaz a transação sem deixar o próprio rollback propagar erro."""
+    try:
+        db.rollback()
+    except Exception:
+        logger.exception("Falha ao fazer rollback da sessão.")
+
+
 class ColetaService:
     """Orquestra a coleta de um produto e a persistência do histórico."""
 
@@ -355,66 +408,109 @@ class ColetaService:
     def _executar_coleta(self, produto: Produto, db: Session) -> ResultadoColeta:
         if not produto.url_produto:
             return self._registrar_falha(
-                db, produto, tentativas=0, erro="Produto sem URL para coleta."
+                db,
+                produto,
+                tentativas=0,
+                erro="Produto sem URL para coleta.",
+                motivo=MOTIVO_SEM_URL,
             )
 
         loja = db.get(Loja, produto.loja_id)
         dominio = identificar_dominio(produto, loja)
         max_tentativas = max(1, settings.COLETA_MAX_TENTATIVAS)
         ultimo_erro = "Falha desconhecida na extração."
+        ultimo_motivo = MOTIVO_INESPERADO
 
         for tentativa in range(1, max_tentativas + 1):
             try:
                 resposta = self._requisitar(produto.url_produto)
                 resposta.raise_for_status()
                 if _pagina_bloqueada(resposta.text):
-                    raise ValueError(
+                    raise FalhaColeta(
+                        MOTIVO_BLOQUEIO,
                         "A loja bloqueou a requisição automática "
-                        "(página de verificação de tráfego)."
+                        "(página de verificação de tráfego).",
                     )
                 preco = extrair_preco(resposta.text, dominio)
                 if preco is None:
-                    raise ValueError("Preço não encontrado na página do produto.")
-
-                historico = HistoricoPreco(
-                    produto_id=produto.id,
-                    preco=preco,
-                    coleta_valida=True,
-                )
-                db.add(historico)
-                db.commit()
-                db.refresh(historico)
-                logger.info(
-                    "Coleta válida do produto %s: R$ %s (tentativa %s)",
-                    produto.id,
-                    preco,
-                    tentativa,
-                )
-                return ResultadoColeta(
-                    sucesso=True,
-                    produto_id=produto.id,
-                    preco=preco,
-                    coleta_valida=True,
-                    tentativas=tentativa,
-                    historico_id=historico.id,
-                )
+                    raise FalhaColeta(
+                        MOTIVO_LAYOUT, _mensagem_layout_alterado(produto, loja, dominio)
+                    )
             except Exception as exc:
                 ultimo_erro = str(exc)
+                ultimo_motivo = _classificar_falha(exc)
                 logger.warning(
-                    "Tentativa %s/%s falhou para o produto %s: %s",
+                    "Tentativa %s/%s falhou para o produto %s [%s]: %s",
                     tentativa,
                     max_tentativas,
                     produto.id,
+                    ultimo_motivo,
                     ultimo_erro,
                 )
                 if _erro_nao_retriavel(exc):
                     return self._registrar_falha(
-                        db, produto, tentativas=tentativa, erro=ultimo_erro
+                        db,
+                        produto,
+                        tentativas=tentativa,
+                        erro=ultimo_erro,
+                        motivo=ultimo_motivo,
                     )
-                if tentativa < max_tentativas:
-                    self._aguardar_intervalo()
+                # Não precisa esperar aqui: a próxima _requisitar já respeita o
+                # intervalo mínimo (RNF08). Esperar nos dois lugares dobrava o tempo.
+                continue
 
-        return self._registrar_falha(db, produto, tentativas=max_tentativas, erro=ultimo_erro)
+            return self._registrar_sucesso(db, produto, preco, tentativa)
+
+        return self._registrar_falha(
+            db,
+            produto,
+            tentativas=max_tentativas,
+            erro=ultimo_erro,
+            motivo=ultimo_motivo,
+        )
+
+    def _registrar_sucesso(
+        self, db: Session, produto: Produto, preco: Decimal, tentativa: int
+    ) -> ResultadoColeta:
+        """Grava a coleta válida. Falha de banco vira coleta inválida, não exceção."""
+        produto_id = produto.id
+        try:
+            historico = HistoricoPreco(
+                produto_id=produto_id,
+                preco=preco,
+                coleta_valida=True,
+            )
+            db.add(historico)
+            db.commit()
+            db.refresh(historico)
+        except Exception as exc:
+            _rollback_seguro(db)
+            logger.exception(
+                "Preço R$ %s do produto %s extraído, mas não foi possível gravar.",
+                preco,
+                produto_id,
+            )
+            return self._registrar_falha(
+                db,
+                produto,
+                tentativas=tentativa,
+                erro=f"Preço extraído, mas não foi possível gravar no banco: {exc}",
+                motivo=MOTIVO_BANCO,
+            )
+        logger.info(
+            "Coleta válida do produto %s: R$ %s (tentativa %s)",
+            produto_id,
+            preco,
+            tentativa,
+        )
+        return ResultadoColeta(
+            sucesso=True,
+            produto_id=produto_id,
+            preco=preco,
+            coleta_valida=True,
+            tentativas=tentativa,
+            historico_id=historico.id,
+        )
 
     def executar_coleta_ativos(
         self,
@@ -429,16 +525,37 @@ class ColetaService:
         coleta dos demais produtos.
         """
         produtos = db.query(Produto).filter(Produto.ativo.is_(True)).all()
+        # Guarda os ids agora: depois de um commit/rollback os objetos expiram e
+        # ler o id de novo iria ao banco (que pode ser justamente o que falhou).
+        alvos = [(produto, produto.id) for produto in produtos]
         resultados: list[ResultadoColeta] = []
-        for produto in produtos:
-            resultado = self.executar_coleta(produto, db)
+        for produto, produto_id in alvos:
+            # RF08: a falha de um produto/loja nunca interrompe os demais.
+            try:
+                resultado = self.executar_coleta(produto, db)
+            except Exception as exc:
+                _rollback_seguro(db)
+                logger.exception(
+                    "Erro inesperado na coleta do produto %s; seguindo para o próximo.",
+                    produto_id,
+                )
+                resultado = ResultadoColeta(
+                    sucesso=False,
+                    produto_id=produto_id,
+                    preco=None,
+                    coleta_valida=False,
+                    tentativas=0,
+                    erro=f"Erro inesperado na coleta: {exc}",
+                    motivo_falha=MOTIVO_INESPERADO,
+                )
             resultados.append(resultado)
             if ao_coletar is not None:
                 try:
                     ao_coletar(produto, resultado)
                 except Exception:
+                    _rollback_seguro(db)
                     logger.exception(
-                        "Falha no pós-processamento do produto %s.", produto.id
+                        "Falha no pós-processamento do produto %s.", produto_id
                     )
         return resultados
 
@@ -470,37 +587,50 @@ class ColetaService:
         produto: Produto,
         tentativas: int,
         erro: str,
+        motivo: str = MOTIVO_INESPERADO,
     ) -> ResultadoColeta:
-        """Registra a falha sem apagar o histórico anterior (RN09, RN14)."""
-        ultimo = (
-            db.query(HistoricoPreco)
-            .filter(HistoricoPreco.produto_id == produto.id)
-            .order_by(HistoricoPreco.data_hora_coleta.desc())
-            .first()
-        )
-        preco_referencia = ultimo.preco if ultimo is not None else Decimal("0.00")
+        """Registra a falha sem apagar o histórico anterior e sem inventar preço.
 
-        historico = HistoricoPreco(
-            produto_id=produto.id,
-            preco=preco_referencia,
-            coleta_valida=False,
-        )
-        db.add(historico)
-        db.commit()
-        db.refresh(historico)
+        RN09/RN14: grava uma linha com `coleta_valida=False` e `preco=NULL`.
+        Nunca 0.00 nem o último preço conhecido: a linha só marca que a coleta
+        falhou. Se nem isso puder ser gravado, o erro é logado e a coleta segue
+        sem exceção, para não derrubar os outros produtos.
+        """
+        produto_id = produto.id
+        url = produto.url_produto
+        historico_id = None
+        try:
+            historico = HistoricoPreco(
+                produto_id=produto_id,
+                preco=None,
+                coleta_valida=False,
+            )
+            db.add(historico)
+            db.commit()
+            db.refresh(historico)
+            historico_id = historico.id
+        except Exception:
+            _rollback_seguro(db)
+            logger.exception(
+                "Não foi possível registrar a falha de coleta do produto %s no histórico.",
+                produto_id,
+            )
         logger.error(
-            "Coleta inválida do produto %s após %s tentativa(s): %s. "
+            "Coleta inválida do produto %s (%s) [%s] após %s tentativa(s): %s "
             "Histórico anterior preservado.",
-            produto.id,
+            produto_id,
+            url,
+            motivo,
             tentativas,
             erro,
         )
         return ResultadoColeta(
             sucesso=False,
-            produto_id=produto.id,
+            produto_id=produto_id,
             preco=None,
             coleta_valida=False,
             tentativas=tentativas,
-            historico_id=historico.id,
+            historico_id=historico_id,
             erro=erro,
+            motivo_falha=motivo,
         )
