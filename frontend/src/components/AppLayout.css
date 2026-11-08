@@ -1,0 +1,134 @@
+/* ===== Estrutura geral ===== */
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+  padding: 5px 6px 3px 0;
+  background: #eef1f6;
+  color: #0f172a;
+}
+
+/* ===== Sidebar ===== */
+.app-sidebar {
+  position: sticky;
+  top: 5px;
+  align-self: flex-start;
+  flex: 0 0 220px;
+  width: 220px;
+  height: calc(100vh - 8px);
+  border-radius: 16px 0 0 16px;
+  background: #0F172A;
+}
+
+.app-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 60px;
+  padding: 0 22px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.app-logo svg {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  color: #93c5fd;
+}
+
+/* ===== Navegação ===== */
+.app-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 28px 0 0;
+}
+
+.app-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 42px;
+  margin: 0 12px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  font: inherit;
+  font-size: 15px;
+  color: #bfd3ff;
+  text-decoration: none;
+}
+
+.app-nav-item svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+
+a.app-nav-item:hover {
+  background: none;
+  color: #fff;
+}
+
+.app-nav-item.ativo,
+a.app-nav-item.ativo:hover {
+  background: none;
+  color:#2563EB;
+}
+
+.app-nav-item.desativado {
+  cursor: default;
+}
+
+/* ===== Área de conteúdo ===== */
+.app-conteudo {
+  flex: 1;
+  min-width: 0;
+  border-radius: 0 14px 14px 0;
+  background: #f8fafc;
+}
+
+.app-topo {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  height: 60px;
+  padding: 0 24px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.app-sair {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.app-sair:hover {
+  background: #eef1f6;
+  color: #0f172a;
+}
+
+.app-avatar {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #cbd5e1;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.app-main {
+  padding: 0 48px 48px 48px;
+}
