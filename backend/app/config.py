@@ -26,6 +26,15 @@ class Settings:
     SUPABASE_URL: str = _supabase_url()
     SUPABASE_SECRET_KEY: str = _env("SUPABASE_SECRET_KEY")
 
+    # Origens do frontend autorizadas a chamar a API pelo navegador (separadas por vírgula).
+    CORS_ORIGINS: list[str] = [
+        o.strip()
+        for o in os.getenv(
+            "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+        ).split(",")
+        if o.strip()
+    ]
+
     # RNF08 — intervalo mínimo entre requisições e limite de tentativas do robô
     COLETA_INTERVALO_MINIMO_SEGUNDOS: float = float(
         os.getenv("COLETA_INTERVALO_MINIMO_SEGUNDOS", "2")
