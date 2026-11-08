@@ -26,7 +26,8 @@ from app.models.monitoramento import Monitoramento
 from app.models.produto import Produto
 from app.services.ciclo_service import CicloMonitoramentoService
 
-BASE = datetime(2020, 1, 1, 12, 0, tzinfo=timezone.utc)  # bem no passado: a coleta nova é sempre a mais recente
+# Poucos dias atrás: dentro da janela da média (ANALISE_JANELA_DIAS) e antes da coleta nova.
+BASE = datetime.now(timezone.utc) - timedelta(days=10)
 URL = "https://loja.com.br/p/1"
 
 
