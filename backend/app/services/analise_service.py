@@ -65,6 +65,7 @@ class ResultadoAnalise:
     variacao_percentual_media: float | None
     variacao_percentual_anterior: float | None
     classificacao: ClassificacaoQueda
+    janela_dias: int = 0  # janela efetivamente usada na média (0 = todo o histórico)
 
     @property
     def queda_relevante(self) -> bool:
@@ -145,14 +146,17 @@ class AnaliseService:
             )
         return sorted(validos, key=lambda c: c.data_hora_coleta)
 
-    def _anteriores_na_janela(self, validos: list[ColetaComPreco]) -> list[ColetaComPreco]:
+    def _anteriores_na_janela(
+        self, validos: list[ColetaComPreco], janela_dias: int | None = None
+    ) -> list[ColetaComPreco]:
         """Coletas válidas anteriores à mais recente que caem dentro da janela
         da média (últimos `janela_dias` dias, contados a partir da coleta mais
         recente — não do relógio, para o resultado ser reproduzível)."""
+        janela = self.janela_dias if janela_dias is None else janela_dias
         anteriores = validos[:-1]
-        if self.janela_dias == 0 or not anteriores:
+        if janela == 0 or not anteriores:
             return anteriores
-        corte = validos[-1].data_hora_coleta - timedelta(days=self.janela_dias)
+        corte = validos[-1].data_hora_coleta - timedelta(days=janela)
         return [c for c in anteriores if c.data_hora_coleta >= corte]
 
     @staticmethod
@@ -172,14 +176,16 @@ class AnaliseService:
         atual, anterior = validos[-1], validos[-2]
         return self._variacao_percentual(anterior.preco, atual.preco)
 
-    def comparar_com_media(self, historico: Iterable[ColetaComPreco]) -> float | None:
+    def comparar_com_media(
+        self, historico: Iterable[ColetaComPreco], janela_dias: int | None = None
+    ) -> float | None:
         """RF12: variação percentual entre o preço atual e a média das
         coletas anteriores válidas. None se não houver amostras suficientes
         (RN10)."""
         validos = self._historico_valido_ordenado(historico)
         if not validos:
             return None
-        anteriores = self._anteriores_na_janela(validos)
+        anteriores = self._anteriores_na_janela(validos, janela_dias)
         if len(anteriores) < self.min_amostras_media:
             return None
         media = sum(c.preco for c in anteriores) / len(anteriores)
@@ -192,9 +198,17 @@ class AnaliseService:
 
     # --- classificação completa (UC11) ---------------------------------------
 
-    def classificar(self, historico: Iterable[ColetaComPreco]) -> ResultadoAnalise:
+    def classificar(
+        self, historico: Iterable[ColetaComPreco], janela_dias: int | None = None
+    ) -> ResultadoAnalise:
         """Fluxo principal do UC11: compara o preço atual com a média
-        histórica e classifica a queda em pequena/relevante/grande."""
+        histórica e classifica a queda em pequena/relevante/grande.
+
+        `janela_dias` sobrescreve, só nesta chamada, a janela configurada
+        (0 = todo o histórico; None = usa a configuração)."""
+        if janela_dias is not None and janela_dias < 0:
+            raise ValueError("A janela da média (dias) não pode ser negativa.")
+        janela = self.janela_dias if janela_dias is None else janela_dias
         validos = self._historico_valido_ordenado(historico)
         if not validos:
             raise ValueError(
@@ -202,7 +216,7 @@ class AnaliseService:
             )
 
         atual = validos[-1]
-        anteriores = self._anteriores_na_janela(validos)
+        anteriores = self._anteriores_na_janela(validos, janela)
 
         variacao_anterior = self.comparar_com_coleta_anterior(historico)
 
@@ -215,6 +229,7 @@ class AnaliseService:
                 variacao_percentual_media=None,
                 variacao_percentual_anterior=variacao_anterior,
                 classificacao=ClassificacaoQueda.SEM_DADOS,
+                janela_dias=janela,
             )
 
         media = sum(c.preco for c in anteriores) / len(anteriores)
@@ -237,4 +252,5 @@ class AnaliseService:
             variacao_percentual_media=variacao_media,
             variacao_percentual_anterior=variacao_anterior,
             classificacao=classificacao,
+            janela_dias=janela,
         )
