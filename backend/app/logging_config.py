@@ -47,13 +47,18 @@ def redigir(texto: str) -> str:
 
 class FiltroSegredos(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
+        # O Uvicorn precisa dos argumentos originais para formatar
+        # os registros de acesso.
+        if record.name == "uvicorn.access":
+            return True
+
         try:
             record.msg = redigir(record.getMessage())
             record.args = None
             if record.exc_info and not record.exc_text:
                 bruto = "".join(traceback.format_exception(*record.exc_info)).rstrip()
                 record.exc_text = redigir(bruto)
-        except Exception:  # log nunca pode derrubar a aplicação
+        except Exception:
             record.msg = "[registro omitido: falha ao redigir segredos]"
             record.args = None
             record.exc_info = None
