@@ -1,0 +1,116 @@
+/* Análise de preço do detalhe do produto (UC07/UC11).
+   Reaproveita .selo, .periodo, .vazio, .erro, .aviso e .btn-link do Dashboard.css. */
+
+.analise {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--borda);
+}
+
+.analise-topo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.analise-topo h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.analise-resumo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 32px;
+  margin-top: 12px;
+}
+
+.analise-preco {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0;
+}
+
+.analise-preco strong {
+  font-size: 22px;
+}
+
+.analise-rotulo {
+  color: var(--texto-suave);
+  font-size: 13px;
+}
+
+.analise-variacoes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 12px 0 0;
+}
+
+.analise-cartao {
+  background: var(--fundo);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.analise-cartao dt {
+  color: var(--texto-suave);
+  font-size: 13px;
+}
+
+.analise-cartao dd {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 0;
+}
+
+.analise-variacao {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.analise-variacao-queda {
+  color: var(--verde);
+}
+
+.analise-variacao-alta {
+  color: var(--erro);
+}
+
+.analise-variacao-igual,
+.analise-variacao-nenhuma {
+  color: var(--texto-suave);
+}
+
+.analise-legenda {
+  color: var(--texto-suave);
+  font-size: 13px;
+}
+
+.analise-nota {
+  margin: 12px 0 0;
+  color: var(--texto-suave);
+  font-size: 14px;
+}
+
+.analise-erro {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.analise-erro .erro {
+  flex: 1 1 260px;
+}
+
+@media (max-width: 640px) {
+  .analise-variacoes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
