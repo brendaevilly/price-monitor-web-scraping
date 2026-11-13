@@ -129,9 +129,9 @@ class CicloMonitoramentoService:
             validos = [h for h in historico if h.coleta_valida and h.preco is not None and h.preco > 0]
             preco_anterior = validos[-2].preco if len(validos) >= 2 else None
 
-            avaliacao = self.alerta.avaliar_condicoes(
-                produto, montar_analise_alerta(item.analise, preco_anterior), db
-            )
+            analise_alerta = montar_analise_alerta(item.analise, preco_anterior)
+            analise_alerta.frete_atual = getattr(coleta, "frete", None)  # issue #105
+            avaliacao = self.alerta.avaliar_condicoes(produto, analise_alerta, db)
             item.alertas = avaliacao.alertas
             item.alertas_ignorados = avaliacao.ignorados
             logger.info(

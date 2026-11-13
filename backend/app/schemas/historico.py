@@ -10,8 +10,9 @@ class ColetaPrecoOut(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    preco: Decimal
+    preco: Decimal  # valor medido: produto + frete (issue #105)
     data_hora_coleta: datetime
+    frete: Decimal | None = None  # parte de `preco` que é frete; 0 = grátis; None = não informado
 
 
 class HistoricoProdutoOut(BaseModel):
@@ -21,7 +22,8 @@ class HistoricoProdutoOut(BaseModel):
     nome: str
     url_produto: str
     coletas: list[ColetaPrecoOut]  # ordem cronológica (mais antiga -> mais recente)
-    preco_atual: Decimal | None
+    preco_atual: Decimal | None  # produto + frete
+    frete_atual: Decimal | None = None  # frete da coleta mais recente (0 = grátis; None = não informado)
     menor_preco: Decimal | None
     media_historica: Decimal | None  # None quando não há dados suficientes (RN10)
     amostras_media: int

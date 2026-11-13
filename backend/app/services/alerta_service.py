@@ -39,12 +39,24 @@ class Analise:
     queda_percentual: Optional[Decimal] = None
     classificacao: Optional[str] = None
     houve_queda_relevante: bool = False
+    # Issue #105: frete embutido em `preco_atual` (0 = grátis; None = não informado).
+    frete_atual: Optional[Decimal] = None
 
 
 @dataclass
 class ResultadoAvaliacao:
     alertas: list[Alerta]
     ignorados: int
+
+
+def _texto_frete(analise: "Analise") -> str:
+    frete = getattr(analise, "frete_atual", None)
+    if frete is None:
+        return ""
+    frete = _decimal(frete)
+    if frete <= 0:
+        return " (frete grátis)"
+    return f" (inclui frete de R$ {frete:.2f})"
 
 
 class AlertaService:
@@ -95,6 +107,7 @@ class AlertaService:
         preco_atual = _decimal(analise.preco_atual)
         disparar_queda = self._queda_dispara_alerta(analise)
         queda = self._percentual_queda(analise)
+        texto_frete = _texto_frete(analise)
 
         monitoramentos = (
             db.query(Monitoramento)
@@ -119,7 +132,7 @@ class AlertaService:
                         TIPO_QUEDA,
                         (
                             f"Queda de {texto_queda} no produto '{produto.nome}'. "
-                            f"Preço atual: R$ {preco_atual:.2f}."
+                            f"Preço atual: R$ {preco_atual:.2f}{texto_frete}."
                         ),
                     )
                 )
@@ -130,7 +143,7 @@ class AlertaService:
                         (
                             f"Preço-alvo de R$ {_decimal(monitoramento.preco_alvo):.2f} "
                             f"atingido em '{produto.nome}'. "
-                            f"Preço atual: R$ {preco_atual:.2f}."
+                            f"Preço atual: R$ {preco_atual:.2f}{texto_frete}."
                         ),
                     )
                 )

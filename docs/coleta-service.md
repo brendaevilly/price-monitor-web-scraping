@@ -126,3 +126,36 @@ HTTP 404/410 e outros 4xx permanentes abortam na primeira tentativa (não adiant
 Requisições automáticas podem receber a tela de verificação de tráfego em vez da página do produto. Nesse caso o serviço registra a falha e preserva o histórico.
 
 Para validar o fluxo feliz sem bloqueio, use uma URL de `books.toscrape.com`. Para o Magazine Luiza, use uma URL de página de produto (`.../p/<id>/...`).
+
+
+## Selenium (issue #103)
+
+Algumas lojas respondem ao `requests` com a tela "você é um robô?". O robô agora
+pode abrir um Chrome headless (Selenium) para essas páginas. Configuração
+(`backend/.env`):
+
+| Variável | Padrão | O que faz |
+|---|---|---|
+| `COLETA_SELENIUM_MODO` | `auto` | `auto`: tenta `requests` e só usa o Chrome se a loja bloquear (403/429/503 ou página de verificação); `sempre`: só Chrome; `desligado`: só `requests`. |
+| `COLETA_SELENIUM_ESPERA_DESAFIO_SEGUNDOS` | `10` | Quanto esperar um desafio automático (ex.: "Verificando seu navegador...") se resolver sozinho. |
+| `COLETA_SELENIUM_CHROME_BIN` | vazio | Caminho do Chrome/Chromium, se não estiver no PATH. |
+
+- O `backend/Dockerfile` já instala `chromium` e `chromium-driver`. Fora do Docker, instale o Chrome na máquina (o Selenium Manager baixa o driver).
+- Se o Chrome não estiver disponível, o robô segue como antes: a página bloqueada vira coleta inválida (RN09).
+- Limite: o Selenium resolve desafios por JavaScript, **não** captchas que exigem um humano (digitar caracteres, clicar em imagens).
+- Os testes automatizados forçam `COLETA_SELENIUM_MODO=desligado` (`test/conftest.py`) e usam um navegador falso.
+
+
+## Frete na medição (issue #105)
+
+O frete mostrado na página do produto entra na medição do preço:
+
+- `historico_precos.preco` = preço do produto **+ frete** (é esse valor que alimenta histórico, análise de queda, preço-alvo e alertas);
+- `historico_precos.frete` = só a parte do frete (`0` = frete grátis; `NULL` = a página não informou, caso de todas as coletas antigas, em que `preco` é só o produto);
+- `GET /produtos/{id}/historico` devolve `frete` em cada coleta e `frete_atual`; o e-mail de alerta informa "(inclui frete de R$ X)" ou "(frete grátis)".
+
+Como o frete é lido: primeiro `offers.shippingDetails.shippingRate` (JSON-LD, schema.org); depois blocos de entrega da página (id/classe com `frete`, `shipping`, `delivery`, `entrega` ou `envio`), ignorando cabeçalho, rodapé e menu. "Frete grátis acima de R$ 99" é condicional e **não** conta como grátis.
+
+Limites: o frete real depende do CEP e das promoções do momento; vale o que a página mostra sem CEP. Se o frete aparece numa coleta e some na seguinte, o preço medido varia pelo valor do frete e pode gerar uma queda/alta aparente. `COLETA_INCLUIR_FRETE=false` desliga o recurso.
+
+**Banco existente:** rode `backend/app/db_scripts/migracao_003_frete.sql` no SQL Editor do Supabase (bancos novos já têm a coluna no `schema.sql`).

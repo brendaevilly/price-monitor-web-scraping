@@ -19,7 +19,9 @@ CREATE TABLE produtos (
     url_produto TEXT NOT NULL UNIQUE,
     ativo BOOLEAN NOT NULL DEFAULT true,
     criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
-    loja_id UUID NOT NULL REFERENCES lojas(id)
+    loja_id UUID NOT NULL REFERENCES lojas(id),
+    -- Issue #104: ofertas do mesmo item em lojas diferentes dividem o grupo_id (NULL = uma loja só)
+    grupo_id UUID
 );
 
 -- Monitoramento (classe associativa: Usuario <-> Produto)
@@ -39,7 +41,9 @@ CREATE TABLE historico_precos (
     produto_id UUID NOT NULL REFERENCES produtos(id) ON DELETE CASCADE,
     preco NUMERIC(10,2) NOT NULL,
     data_hora_coleta TIMESTAMPTZ NOT NULL DEFAULT now(),
-    coleta_valida BOOLEAN NOT NULL DEFAULT true
+    coleta_valida BOOLEAN NOT NULL DEFAULT true,
+    -- Issue #105: preco = produto + frete; frete = parte do frete (0 = grátis, NULL = não informado)
+    frete NUMERIC(10,2)
 );
 
 -- Alerta
@@ -56,3 +60,4 @@ CREATE TABLE alertas (
 CREATE INDEX idx_historico_produto ON historico_precos(produto_id, data_hora_coleta);
 CREATE INDEX idx_monitoramento_usuario ON monitoramentos(usuario_id);
 CREATE INDEX idx_alerta_usuario ON alertas(usuario_id);
+CREATE INDEX ix_produtos_grupo_id ON produtos(grupo_id);

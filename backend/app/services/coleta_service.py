@@ -1,5 +1,9 @@
 """Robô de scraping de preços (RF06, RF07, RF08).
 
+Frete (issue #105): quando a página mostra o frete, ele entra na medição:
+`HistoricoPreco.preco` guarda produto + frete e `HistoricoPreco.frete` guarda
+só o frete (0 = grátis, NULL = não informado na página).
+
 Sites do MVP: Mercado Livre e Magazine Luiza. Também há extratores para
 Amazon BR e Kabum, para books.toscrape.com (demonstração) e um fallback
 genérico (JSON-LD / meta tags). Os extratores ficam num registro
@@ -31,6 +35,7 @@ from app.config import settings
 from app.models.historico_preco import HistoricoPreco
 from app.models.loja import Loja
 from app.models.produto import Produto
+from app.services import navegador
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +57,10 @@ class ResultadoColeta:
     tentativas: int
     historico_id: Optional[UUID] = None
     erro: Optional[str] = None
+    # Issue #105: `preco` é o valor medido (produto + frete). 0 = frete grátis;
+    # None = a página não informou o frete (então `preco` é só o produto).
+    frete: Optional[Decimal] = None
+    preco_produto: Optional[Decimal] = None
 
 
 def normalizar_preco(valor: str | int | float | Decimal | None) -> Optional[Decimal]:
@@ -180,6 +189,155 @@ def extrair_preco_generico(soup: BeautifulSoup, html: str) -> Optional[Decimal]:
     return extrair_preco_meta(soup)
 
 
+# ---------- frete (issue #105) ----------
+
+_RE_ATRIBUTO_FRETE = re.compile(r"frete|shipping|delivery|entrega|envio", re.IGNORECASE)
+_RE_FRETE_CONDICIONAL = re.compile(
+    r"gr[áa]tis\s+(?:\w+\s+){0,3}?(?:acima|a partir|para compras|em compras|nas compras|"
+    r"na compra|nos pedidos|em pedidos)"
+)
+_RE_FRETE_GRATIS = re.compile(
+    r"(?:frete|entrega|envio)\s+(?:\w+\s+){0,2}?gr[áa]tis|chega(?:r[áa])?\s+gr[áa]tis|"
+    r"gr[áa]tis\s+(?:de\s+)?(?:frete|entrega|envio)"
+)
+_VALOR_BR = r"R\$\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?|\d+(?:,\d{2})?)"
+_RE_FRETE_VALOR = re.compile(
+    rf"(?:frete|entrega|envio)[^\d$]{{0,20}}{_VALOR_BR}|{_VALOR_BR}\s+(?:de\s+)?(?:frete|entrega|envio)",
+    re.IGNORECASE,
+)
+_TAGS_IGNORADAS_FRETE = {"script", "style", "noscript", "header", "footer", "nav", "head"}
+_MAX_TEXTO_FRETE = 400
+
+
+def _valor_frete(valor) -> Optional[Decimal]:
+    """Converte um valor de frete (aceita 0, ao contrário de `normalizar_preco`)."""
+    if valor is None or isinstance(valor, bool):
+        return None
+    texto = str(valor).strip()
+    if not texto:
+        return None
+    try:
+        numero = Decimal(texto)
+    except InvalidOperation:
+        return normalizar_preco(texto)
+    if not numero.is_finite() or numero < 0:
+        return None
+    return numero.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def interpretar_texto_frete(texto: str) -> Optional[Decimal]:
+    """Lê o frete de um trecho de texto: 0 (grátis), valor em reais ou None.
+
+    "Frete grátis acima de R$ 99" é condicional (depende do carrinho/CEP), então
+    não conta como frete grátis: devolve None.
+    """
+    texto = " ".join((texto or "").lower().split())
+    if not texto:
+        return None
+    if _RE_FRETE_CONDICIONAL.search(texto):
+        return None
+    if _RE_FRETE_GRATIS.search(texto):
+        return Decimal("0.00")
+    achado = _RE_FRETE_VALOR.search(texto)
+    if achado:
+        bruto = achado.group(1) or achado.group(2)
+        return normalizar_preco(bruto)
+    return None
+
+
+def _frete_em_dict_json(dados) -> Optional[Decimal]:
+    """schema.org: offers.shippingDetails.shippingRate.value (value pode ser 0)."""
+    if isinstance(dados, list):
+        for item in dados:
+            encontrado = _frete_em_dict_json(item)
+            if encontrado is not None:
+                return encontrado
+        return None
+    if not isinstance(dados, dict):
+        return None
+    if "@graph" in dados:
+        encontrado = _frete_em_dict_json(dados["@graph"])
+        if encontrado is not None:
+            return encontrado
+
+    ofertas = dados.get("offers")
+    if isinstance(ofertas, list) and ofertas:
+        ofertas = ofertas[0]
+    origem = ofertas if isinstance(ofertas, dict) else dados
+
+    detalhes = origem.get("shippingDetails")
+    if isinstance(detalhes, list) and detalhes:
+        detalhes = detalhes[0]
+    if isinstance(detalhes, dict):
+        taxa = detalhes.get("shippingRate")
+        if isinstance(taxa, list) and taxa:
+            taxa = taxa[0]
+        if isinstance(taxa, dict):
+            return _valor_frete(taxa.get("value", taxa.get("price")))
+        return _valor_frete(taxa)
+    return None
+
+
+def extrair_frete_json_ld(html: str) -> Optional[Decimal]:
+    soup = BeautifulSoup(html, "html.parser")
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        conteudo = script.string or script.get_text() or ""
+        if not conteudo.strip():
+            continue
+        try:
+            dados = json.loads(conteudo)
+        except json.JSONDecodeError:
+            continue
+        frete = _frete_em_dict_json(dados)
+        if frete is not None:
+            return frete
+    return None
+
+
+def _em_regiao_ignorada(tag) -> bool:
+    return any(pai.name in _TAGS_IGNORADAS_FRETE for pai in [tag, *tag.parents])
+
+
+def extrair_frete_texto(soup: BeautifulSoup) -> Optional[Decimal]:
+    """Procura o frete em blocos cujo id/classe/data-testid falam de frete/entrega.
+
+    Só olha blocos curtos e fora de cabeçalho/rodapé/menu, para não confundir com
+    banners promocionais da loja ("Frete grátis em todo o site").
+    """
+    for tag in soup.find_all(True):
+        if _em_regiao_ignorada(tag):
+            continue
+        marcas = " ".join(
+            [
+                tag.get("id") or "",
+                " ".join(tag.get("class") or []),
+                tag.get("data-testid") or "",
+                tag.get("itemprop") or "",
+            ]
+        )
+        if not _RE_ATRIBUTO_FRETE.search(marcas):
+            continue
+        texto = tag.get_text(" ", strip=True)
+        if not texto or len(texto) > _MAX_TEXTO_FRETE:
+            continue
+        frete = interpretar_texto_frete(texto)
+        if frete is not None:
+            return frete
+    return None
+
+
+def extrair_frete(html: str) -> Optional[Decimal]:
+    """Frete mostrado na página: 0 (grátis), valor em reais ou None (não informado).
+
+    O frete real depende do CEP do comprador; aqui vale o que a página mostra
+    sem CEP (dados estruturados primeiro, depois os blocos de entrega).
+    """
+    frete = extrair_frete_json_ld(html)
+    if frete is not None:
+        return frete
+    return extrair_frete_texto(BeautifulSoup(html, "html.parser"))
+
+
 def _normalizar_dominio_bruto(dominio: str) -> str:
     dominio = (dominio or "").strip().lower()
     return dominio[4:] if dominio.startswith("www.") else dominio
@@ -303,12 +461,28 @@ _MARCADORES_BLOQUEIO = (
     "gz-account-verification",
     "/errors/validatecaptcha",  # Amazon: página de captcha
     "digite os caracteres que você vê abaixo",
+    "just a moment...",  # Cloudflare
+    "cf-challenge",
+    "verifying you are human",
+    "are you a robot",
+    "você é um robô",
+    "access denied",
 )
 
 
 def _pagina_bloqueada(html: str) -> bool:
     html_lower = html.lower()
     return any(marcador in html_lower for marcador in _MARCADORES_BLOQUEIO)
+
+
+_STATUS_BLOQUEIO = {403, 429, 503}
+
+
+def _precisa_navegador(resposta) -> bool:
+    """True se a loja barrou o `requests` (status de bloqueio ou tela de robô)."""
+    if getattr(resposta, "status_code", 200) in _STATUS_BLOQUEIO:
+        return True
+    return _pagina_bloqueada(getattr(resposta, "text", "") or "")
 
 
 def _erro_nao_retriavel(exc: Exception) -> bool:
@@ -365,29 +539,38 @@ class ColetaService:
 
         for tentativa in range(1, max_tentativas + 1):
             try:
-                resposta = self._requisitar(produto.url_produto)
+                resposta = self._obter_pagina(produto.url_produto)
                 resposta.raise_for_status()
                 if _pagina_bloqueada(resposta.text):
                     raise ValueError(
                         "A loja bloqueou a requisição automática "
                         "(página de verificação de tráfego)."
                     )
-                preco = extrair_preco(resposta.text, dominio)
-                if preco is None:
+                preco_produto = extrair_preco(resposta.text, dominio)
+                if preco_produto is None:
                     raise ValueError("Preço não encontrado na página do produto.")
+
+                # Issue #105: o frete entra na medição (produto + frete). Falha
+                # ao ler o frete nunca invalida a coleta do preço.
+                frete = self._extrair_frete_seguro(resposta.text)
+                preco = preco_produto + (frete or Decimal("0.00"))
 
                 historico = HistoricoPreco(
                     produto_id=produto.id,
                     preco=preco,
+                    frete=frete,
                     coleta_valida=True,
                 )
                 db.add(historico)
                 db.commit()
                 db.refresh(historico)
                 logger.info(
-                    "Coleta válida do produto %s: R$ %s (tentativa %s)",
+                    "Coleta válida do produto %s: R$ %s (produto R$ %s, frete %s) "
+                    "(tentativa %s)",
                     produto.id,
                     preco,
+                    preco_produto,
+                    "n/d" if frete is None else f"R$ {frete}",
                     tentativa,
                 )
                 return ResultadoColeta(
@@ -397,6 +580,8 @@ class ColetaService:
                     coleta_valida=True,
                     tentativas=tentativa,
                     historico_id=historico.id,
+                    frete=frete,
+                    preco_produto=preco_produto,
                 )
             except Exception as exc:
                 ultimo_erro = str(exc)
@@ -415,6 +600,16 @@ class ColetaService:
                     self._aguardar_intervalo()
 
         return self._registrar_falha(db, produto, tentativas=max_tentativas, erro=ultimo_erro)
+
+    @staticmethod
+    def _extrair_frete_seguro(html: str) -> Optional[Decimal]:
+        if not settings.COLETA_INCLUIR_FRETE:
+            return None
+        try:
+            return extrair_frete(html)
+        except Exception:
+            logger.warning("Não foi possível ler o frete da página.", exc_info=True)
+            return None
 
     def executar_coleta_ativos(
         self,
@@ -441,6 +636,33 @@ class ColetaService:
                         "Falha no pós-processamento do produto %s.", produto.id
                     )
         return resultados
+
+    def _obter_pagina(self, url: str):
+        """Busca a página (issue #103).
+
+        - modo "desligado": só `requests`;
+        - modo "auto": `requests` primeiro; se a loja bloquear, repete no Chrome
+          (Selenium);
+        - modo "sempre": só o Chrome.
+        Se o Selenium/Chrome não estiver disponível, mantém o comportamento
+        antigo (a resposta bloqueada vira falha de coleta, RN09).
+        """
+        modo = navegador.modo_selenium()
+        if modo == navegador.MODO_SEMPRE:
+            return self._requisitar_navegador(url)
+
+        resposta = self._requisitar(url)
+        if modo == navegador.MODO_AUTO and _precisa_navegador(resposta):
+            logger.info("Loja bloqueou o requests em %s; tentando com Selenium.", url)
+            try:
+                return self._requisitar_navegador(url)
+            except navegador.NavegadorIndisponivel as exc:
+                logger.warning("Selenium indisponível (%s); mantendo a resposta original.", exc)
+        return resposta
+
+    def _requisitar_navegador(self, url: str):
+        self._aguardar_intervalo()
+        return navegador.buscar_pagina(url, USER_AGENT, _pagina_bloqueada)
 
     def _requisitar(self, url: str) -> requests.Response:
         self._aguardar_intervalo()

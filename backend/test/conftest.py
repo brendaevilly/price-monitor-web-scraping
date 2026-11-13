@@ -3,6 +3,8 @@ import uuid
 
 # Variáveis fictícias ANTES de importar a app (database.py exige as três).
 os.environ["DATABASE_URL"] = "sqlite://"
+# Testes nunca abrem o Chrome de verdade (issue #103).
+os.environ["COLETA_SELENIUM_MODO"] = "desligado"
 os.environ.setdefault("SUPABASE_URL", "https://exemplo.supabase.co")
 os.environ.setdefault(
     "SUPABASE_SECRET_KEY",

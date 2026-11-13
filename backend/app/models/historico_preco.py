@@ -16,3 +16,6 @@ class HistoricoPreco(Base):
     preco = Column(Numeric(10, 2), nullable=False)
     data_hora_coleta = Column(DateTime(timezone=True), server_default=func.now())
     coleta_valida = Column(Boolean, default=True, nullable=False)
+    # Issue #105: `preco` = produto + frete. Aqui fica só o frete (0 = grátis;
+    # NULL = a página não informou).
+    frete = Column(Numeric(10, 2), nullable=True)

@@ -33,6 +33,25 @@ class Settings:
     COLETA_MAX_TENTATIVAS: int = int(os.getenv("COLETA_MAX_TENTATIVAS", "3"))
     COLETA_TIMEOUT_SEGUNDOS: float = float(os.getenv("COLETA_TIMEOUT_SEGUNDOS", "15"))
 
+    # Issue #105 — o frete mostrado na página entra na medição do preço.
+    COLETA_INCLUIR_FRETE: bool = os.getenv("COLETA_INCLUIR_FRETE", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "sim",
+        "on",
+    }
+
+    # Issue #103 — Selenium para passar por "você é um robô?" nos sites.
+    # "auto": tenta com requests e só abre o Chrome se a loja bloquear;
+    # "sempre": usa sempre o Chrome; "desligado": só requests (como antes).
+    COLETA_SELENIUM_MODO: str = _env("COLETA_SELENIUM_MODO", "auto").lower()
+    COLETA_SELENIUM_ESPERA_DESAFIO_SEGUNDOS: float = float(
+        os.getenv("COLETA_SELENIUM_ESPERA_DESAFIO_SEGUNDOS", "10")
+    )
+    # Caminho do Chrome/Chromium, se não estiver no PATH (ex.: /usr/bin/chromium).
+    COLETA_SELENIUM_CHROME_BIN: str = _env("COLETA_SELENIUM_CHROME_BIN")
+
     # RF06 — agendamento da coleta periódica (APScheduler)
     COLETA_SCHEDULER_HABILITADO: bool = os.getenv(
         "COLETA_SCHEDULER_HABILITADO", "true"
@@ -72,4 +91,4 @@ class Settings:
     }
 
 
-settings = Settings()
+settings = Settings()

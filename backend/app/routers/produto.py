@@ -14,7 +14,8 @@ from app.models.produto import Produto
 from app.models.usuario import Usuario
 from app.schemas.analise import AnaliseProdutoOut
 from app.schemas.historico import ColetaPrecoOut, HistoricoProdutoOut
-from app.schemas.produto import ProdutoCreate, ProdutoMonitoradoOut
+from app.schemas.comparativo import ComparativoLojasOut, OfertaLojaOut
+from app.schemas.produto import MAX_OUTRAS_LOJAS, OfertaLojaCreate, ProdutoCreate, ProdutoMonitoradoOut
 from app.services.analise_service import AnaliseService, ClassificacaoQueda
 from app.utils.urls import url_pertence_a_loja
 
@@ -33,11 +34,99 @@ def _montar_saida(produto: Produto, loja: Loja, mon: Monitoramento) -> ProdutoMo
         url_produto=produto.url_produto,
         ativo=produto.ativo,
         loja=loja,
+        grupo_id=produto.grupo_id,
         monitoramento_id=mon.id,
         preco_alvo=mon.preco_alvo,
         alerta_ativo=mon.alerta_ativo,
         data_cadastro=mon.data_cadastro,
     )
+
+
+def _loja_valida_para_url(db: Session, loja_id: uuid.UUID, url_produto: str) -> Loja:
+    """RN03: a loja precisa existir e a URL precisa pertencer a ela."""
+    loja = db.get(Loja, loja_id)
+    if loja is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Loja não encontrada. Cadastre a loja antes de cadastrar o produto.",
+        )
+    # A URL é o que "identifica" a loja do produto.
+    if not url_pertence_a_loja(url_produto, loja.dominio):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"A URL informada não pertence à loja '{loja.nome}' ({loja.dominio}).",
+        )
+    return loja
+
+
+def _vincular_produto(
+    db: Session,
+    usuario: Usuario,
+    *,
+    nome: str,
+    loja: Loja,
+    url_produto: str,
+    preco_alvo: Decimal | None,
+    grupo_id: uuid.UUID | None = None,
+) -> tuple[Produto, Monitoramento]:
+    """Cria (ou reaproveita) o Produto da URL e o Monitoramento do usuário.
+
+    Não faz commit: quem chama decide, para salvar tudo junto ou nada.
+    """
+    # O Produto é compartilhado entre usuários (o histórico é por produto, RN10):
+    # se a URL já existe, reaproveita; só o Monitoramento é individual.
+    produto = db.scalar(select(Produto).where(Produto.url_produto == url_produto))
+    if produto is None:
+        produto = Produto(nome=nome, url_produto=url_produto, loja_id=loja.id, grupo_id=grupo_id)
+        db.add(produto)
+        db.flush()  # gera o id sem fechar a transação
+    else:
+        if db.scalar(
+            select(Monitoramento).where(
+                Monitoramento.usuario_id == usuario.id,
+                Monitoramento.produto_id == produto.id,
+            )
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Você já está monitorando este produto."
+            )
+        if grupo_id is not None:
+            if produto.grupo_id not in (None, grupo_id):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    f"O produto da loja '{loja.nome}' já faz parte de outro grupo de lojas.",
+                )
+            produto.grupo_id = grupo_id
+        produto.ativo = True  # volta a ser coletado se estava sem monitoramento
+
+    monitoramento = Monitoramento(usuario_id=usuario.id, produto_id=produto.id, preco_alvo=preco_alvo)
+    db.add(monitoramento)
+    db.flush()
+    return produto, monitoramento
+
+
+def _ofertas_monitoradas(
+    db: Session, usuario: Usuario, produto: Produto
+) -> list[tuple[Produto, Loja, Monitoramento]]:
+    """Ofertas do mesmo item (mesmo grupo) que o usuário monitora. Inclui o próprio produto."""
+    filtro = Produto.grupo_id == produto.grupo_id if produto.grupo_id else Produto.id == produto.id
+    return list(
+        db.execute(
+            select(Produto, Loja, Monitoramento)
+            .join(Monitoramento, Monitoramento.produto_id == Produto.id)
+            .join(Loja, Loja.id == Produto.loja_id)
+            .where(filtro, Monitoramento.usuario_id == usuario.id)
+            .order_by(Monitoramento.data_cadastro.asc())
+        ).all()
+    )
+
+
+def _exigir_lojas_distintas(loja_ids: list[uuid.UUID]) -> None:
+    if len(set(loja_ids)) != len(loja_ids):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Cada loja só pode aparecer uma vez por produto.",
+        )
 
 
 @router.post(
@@ -52,48 +141,128 @@ def cadastrar_produto(
     usuario: Usuario = Depends(get_usuario_atual),
 ):
     # Formato da URL, nome e preço-alvo já foram validados pelo schema (RF05).
+    loja = _loja_valida_para_url(db, dados.loja_id, dados.url_produto)
 
-    # RN03: a loja precisa existir...
-    loja = db.get(Loja, dados.loja_id)
-    if loja is None:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "Loja não encontrada. Cadastre a loja antes de cadastrar o produto.",
+    # Issue #104: o mesmo produto em outras lojas, tudo na mesma transação.
+    extras = [(o, _loja_valida_para_url(db, o.loja_id, o.url_produto)) for o in dados.outras_lojas]
+    _exigir_lojas_distintas([loja.id, *[l.id for _, l in extras]])
+    grupo_id = uuid.uuid4() if extras else None
+
+    try:
+        produto, monitoramento = _vincular_produto(
+            db, usuario, nome=dados.nome, loja=loja, url_produto=dados.url_produto,
+            preco_alvo=dados.preco_alvo,
         )
-    # ...e a URL precisa pertencer a ela (é isso que "identifica" a loja do produto).
-    if not url_pertence_a_loja(dados.url_produto, loja.dominio):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"A URL informada não pertence à loja '{loja.nome}' ({loja.dominio}).",
-        )
+        if grupo_id is not None:
+            if produto.grupo_id not in (None, grupo_id):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "Este produto já faz parte de outro grupo de lojas."
+                )
+            produto.grupo_id = grupo_id
+            for oferta, loja_extra in extras:
+                _vincular_produto(
+                    db, usuario, nome=oferta.nome or dados.nome, loja=loja_extra,
+                    url_produto=oferta.url_produto,
+                    preco_alvo=oferta.preco_alvo if oferta.preco_alvo is not None else dados.preco_alvo,
+                    grupo_id=grupo_id,
+                )
+    except HTTPException:
+        db.rollback()  # nada fica salvo se qualquer loja falhar
+        raise
 
-    # O Produto é compartilhado entre usuários (o histórico é por produto, RN10):
-    # se a URL já existe, reaproveita; só o Monitoramento é individual.
-    produto = db.scalar(select(Produto).where(Produto.url_produto == dados.url_produto))
-    if produto is None:
-        produto = Produto(nome=dados.nome, url_produto=dados.url_produto, loja_id=loja.id)
-        db.add(produto)
-        db.flush()  # gera o id sem fechar a transação
-    else:
-        if db.scalar(
-            select(Monitoramento).where(
-                Monitoramento.usuario_id == usuario.id,
-                Monitoramento.produto_id == produto.id,
-            )
-        ):
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Você já está monitorando este produto."
-            )
-        produto.ativo = True  # volta a ser coletado se estava sem monitoramento
-
-    monitoramento = Monitoramento(
-        usuario_id=usuario.id, produto_id=produto.id, preco_alvo=dados.preco_alvo
-    )
-    db.add(monitoramento)
-    db.commit()  # Produto + Monitoramento salvos juntos ou nenhum
+    db.commit()  # Produto(s) + Monitoramento(s) salvos juntos ou nenhum
     db.refresh(produto)
     db.refresh(monitoramento)
     return _montar_saida(produto, loja, monitoramento)
+
+
+@router.post(
+    "/{produto_id}/lojas",
+    response_model=ProdutoMonitoradoOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Monitorar o mesmo produto em mais uma loja (issue #104)",
+)
+def adicionar_loja(
+    produto_id: uuid.UUID,
+    dados: OfertaLojaCreate,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_atual),
+):
+    origem = _produto_monitorado_pelo_usuario(db, produto_id, usuario)
+    loja = _loja_valida_para_url(db, dados.loja_id, dados.url_produto)
+
+    existentes = _ofertas_monitoradas(db, usuario, origem)
+    if len(existentes) > MAX_OUTRAS_LOJAS:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Limite de {MAX_OUTRAS_LOJAS + 1} lojas por produto atingido.",
+        )
+    if loja.id in {p.loja_id for p, _, _ in existentes}:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Você já monitora este produto na loja '{loja.nome}'."
+        )
+
+    grupo_id = origem.grupo_id or uuid.uuid4()
+    monitoramento_origem = next(m for p, _, m in existentes if p.id == origem.id)
+    try:
+        produto, monitoramento = _vincular_produto(
+            db, usuario, nome=dados.nome or origem.nome, loja=loja, url_produto=dados.url_produto,
+            preco_alvo=dados.preco_alvo if dados.preco_alvo is not None else monitoramento_origem.preco_alvo,
+            grupo_id=grupo_id,
+        )
+    except HTTPException:
+        db.rollback()
+        raise
+    origem.grupo_id = grupo_id
+    db.commit()
+    db.refresh(produto)
+    db.refresh(monitoramento)
+    return _montar_saida(produto, loja, monitoramento)
+
+
+@router.get(
+    "/{produto_id}/lojas",
+    response_model=ComparativoLojasOut,
+    summary="Comparar o produto entre as lojas monitoradas (issue #104)",
+)
+def comparar_lojas(
+    produto_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_atual),
+):
+    produto = _produto_monitorado_pelo_usuario(db, produto_id, usuario)
+
+    ofertas: list[OfertaLojaOut] = []
+    for oferta, loja, _mon in _ofertas_monitoradas(db, usuario, produto):
+        validas = _coletas_validas(db, oferta.id)  # RN09: só coletas válidas deste produto
+        ultima = validas[-1] if validas else None
+        ofertas.append(
+            OfertaLojaOut(
+                produto_id=oferta.id,
+                loja=loja,
+                url_produto=oferta.url_produto,
+                preco_atual=_duas_casas(ultima.preco) if ultima else None,
+                frete=_duas_casas(ultima.frete) if ultima else None,
+                data_hora_coleta=ultima.data_hora_coleta if ultima else None,
+                menor_preco=_duas_casas(min(c.preco for c in validas)) if validas else None,
+            )
+        )
+
+    # Da mais barata para a mais cara; lojas ainda sem preço vão para o fim.
+    ofertas.sort(key=lambda o: (o.preco_atual is None, o.preco_atual or Decimal(0)))
+    com_preco = [o for o in ofertas if o.preco_atual is not None]
+    melhor = com_preco[0].preco_atual if com_preco else None
+    for o in com_preco:
+        o.melhor_oferta = o.preco_atual == melhor
+
+    return ComparativoLojasOut(
+        produto_id=produto.id,
+        nome=produto.nome,
+        grupo_id=produto.grupo_id,
+        ofertas=ofertas,
+        melhor_oferta_produto_id=com_preco[0].produto_id if com_preco else None,
+        economia=(com_preco[-1].preco_atual - melhor) if len(com_preco) >= 2 else None,
+    )
 
 
 @router.get("", response_model=list[ProdutoMonitoradoOut], summary="Listar meus produtos (UC06)")
@@ -147,6 +316,7 @@ def _coletas_validas(db: Session, produto_id: uuid.UUID) -> list[Row]:
                 HistoricoPreco.preco,
                 HistoricoPreco.data_hora_coleta,
                 HistoricoPreco.coleta_valida,
+                HistoricoPreco.frete,
             )
             .where(
                 HistoricoPreco.produto_id == produto_id,
@@ -177,6 +347,7 @@ def consultar_historico(
             url_produto=produto.url_produto,
             coletas=[],
             preco_atual=None,
+            frete_atual=None,
             menor_preco=None,
             media_historica=None,
             amostras_media=0,
@@ -192,6 +363,7 @@ def consultar_historico(
         url_produto=produto.url_produto,
         coletas=[ColetaPrecoOut.model_validate(c) for c in coletas],
         preco_atual=resultado.preco_atual,
+        frete_atual=_duas_casas(coletas[-1].frete),
         menor_preco=min(c.preco for c in coletas),
         media_historica=_duas_casas(resultado.media_historica),
         amostras_media=resultado.amostras_media,
