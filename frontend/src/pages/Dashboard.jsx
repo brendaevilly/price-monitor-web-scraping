@@ -15,7 +15,6 @@ import AnaliseDetalhe from '../components/AnaliseDetalhe';
 import {
   IconeAlertas,
   IconeCalendario,
-  IconeConfig,
   IconeGrafico,
   IconeInicio,
   IconeKebab,

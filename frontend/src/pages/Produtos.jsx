@@ -34,7 +34,6 @@ function Produtos() {
 
   useEffect(() => {
     let ativo = true;
-    setAvisoResumo('');
     Promise.allSettled([listarProdutos(), resumoAnalise()]).then(([resultadoProdutos, resultadoResumo]) => {
       if (!ativo) return;
       if (resultadoProdutos.status === 'rejected') {

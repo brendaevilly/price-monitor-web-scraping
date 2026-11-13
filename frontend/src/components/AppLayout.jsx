@@ -1,8 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  IconeAlertas,
-  IconeConfig,
   IconeInicio,
   IconeLogo,
   IconePacoteBusca,
