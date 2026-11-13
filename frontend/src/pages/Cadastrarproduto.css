@@ -1,0 +1,153 @@
+/* ===== Página ===== */
+.cp-pagina {
+  max-width: 760px;
+  padding-top: 9px;
+  color: #0f172a;
+}
+
+.cp-voltar {
+  margin-left: -14px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: #2563eb;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.cp-titulo {
+  margin: 16px 0 2px;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 30px;
+}
+
+.cp-sub {
+  margin: 0 0 28px;
+  font-size: 13px;
+  line-height: 18px;
+  color: #64748b;
+}
+
+/* ===== Card do formulário ===== */
+.cp-card {
+  padding: 28px 40px 24px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(15, 23, 42, 0.1);
+}
+
+/* ===== Campos ===== */
+.cp-campo {
+  margin-bottom: 18px;
+}
+
+.cp-rotulo {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 20px;
+}
+
+.cp-obrigatorio {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  color: #ef2b2b;
+}
+
+.cp-opcional {
+  font-size: 12px;
+  font-weight: 400;
+  color: #a3adbb;
+}
+
+.cp-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  font: inherit;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.cp-input::placeholder {
+  color: #b9c2cf;
+}
+
+.cp-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.22);
+}
+
+.cp-input[aria-invalid='true'] {
+  border-color: #dc2626;
+}
+
+.cp-input:disabled {
+  background: #f8fafc;
+}
+
+/* ===== Mensagens ===== */
+.cp-erro {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #dc2626;
+}
+
+.cp-erro-geral {
+  margin: 0 0 18px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #fef2f2;
+  font-size: 14px;
+  color: #991b1b;
+}
+
+.cp-sucesso {
+  margin: 0 0 18px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #f0fdf4;
+  font-size: 14px;
+  color: #166534;
+}
+
+/* ===== Botão ===== */
+.cp-botao {
+  display: block;
+  width: 340px;
+  max-width: 100%;
+  height: 44px;
+  margin: 24px auto 0;
+  border: 0;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cp-botao:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.cp-botao:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.4);
+  outline-offset: 2px;
+}
+
+.cp-botao:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
