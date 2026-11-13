@@ -13,3 +13,7 @@ class Produto(Base):
     ativo = Column(Boolean, default=True, nullable=False)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     loja_id = Column(UUID(as_uuid=True), ForeignKey("lojas.id"), nullable=False)
+    # Issue #104: o mesmo item em várias lojas. Cada oferta (loja + URL) é um
+    # Produto com histórico próprio; as ofertas do mesmo item dividem o grupo_id.
+    # NULL = produto monitorado em uma loja só.
+    grupo_id = Column(UUID(as_uuid=True), nullable=True, index=True)

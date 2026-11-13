@@ -26,6 +26,7 @@ def _montar_saida(produto: Produto, loja: Loja, mon: Monitoramento) -> ProdutoMo
         url_produto=produto.url_produto,
         ativo=produto.ativo,
         loja=loja,
+        grupo_id=produto.grupo_id,
         monitoramento_id=mon.id,
         preco_alvo=mon.preco_alvo,
         alerta_ativo=mon.alerta_ativo,
