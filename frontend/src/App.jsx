@@ -5,8 +5,9 @@ import AppLayout from './components/AppLayout';
 import Login from './pages/Login';
 import Cadastro from './pages/Cadastro';
 import Dashboard from './pages/Dashboard';
-import CadastrarProduto from "./pages/Cadastrarproduto";
-
+import CadastrarProduto from './pages/Cadastrarproduto';
+import Produtos from './pages/Produtos';
+import Alertas from './pages/Alertas';
 
 function App() {
   return (
@@ -21,7 +22,9 @@ function App() {
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route element={<AppLayout />}>
+              <Route path="/produtos" element={<Produtos />} />
               <Route path="/produtos/novo" element={<CadastrarProduto />} />
+              <Route path="/alertas" element={<Alertas />} />
             </Route>
           </Route>
 

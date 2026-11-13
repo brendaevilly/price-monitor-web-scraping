@@ -34,8 +34,6 @@ function Produtos() {
 
   useEffect(() => {
     let ativo = true;
-    setCarregando(true);
-    setErro('');
     setAvisoResumo('');
     Promise.allSettled([listarProdutos(), resumoAnalise()]).then(([resultadoProdutos, resultadoResumo]) => {
       if (!ativo) return;

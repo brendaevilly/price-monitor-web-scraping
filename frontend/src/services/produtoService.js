@@ -5,8 +5,10 @@ export async function buscarHistorico(produtoId) {
   return response.data;
 }
 
-export async function buscarAnalise(produtoId) {
-  const response = await api.get(`/produtos/${produtoId}/analise`);
+export async function buscarAnalise(produtoId, janelaDias) {
+  const response = await api.get(`/produtos/${produtoId}/analise`, {
+    params: janelaDias === undefined || janelaDias === null ? undefined : { janela_dias: janelaDias },
+  });
   return response.data;
 }
 

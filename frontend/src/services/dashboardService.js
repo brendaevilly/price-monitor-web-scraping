@@ -41,7 +41,8 @@ function traduzirErro(error) {
     return new ApiError(detalhe || 'Produto não encontrado.', 'NAO_ENCONTRADO', status);
   }
   if (status === 422 || status === 400) {
-    return new ApiError('Dados inválidos na requisição.', 'DADOS_INVALIDOS', status);
+    // 422 do Pydantic traz lista em `detail`; mensagens de regra de negócio vêm como string
+    return new ApiError(detalhe || 'Dados inválidos na requisição.', 'DADOS_INVALIDOS', status);
   }
   if (status >= 500) {
     return new ApiError(
@@ -71,8 +72,39 @@ export const resumoAnalise = () => get('/analise/resumo');
 // UC06/UC07: coletas válidas em ordem cronológica + preço atual, menor preço e média
 export const buscarHistorico = (produtoId) => get(`/produtos/${produtoId}/historico`);
 
-// UC07: classificação da queda e variações percentuais
-export const buscarAnalise = (produtoId) => get(`/produtos/${produtoId}/analise`);
+// UC07/UC11: classificação da queda e variações percentuais.
+// janelaDias: janela da média em dias (0 = todo o histórico); omitido = padrão do servidor.
+export const buscarAnalise = (produtoId, janelaDias) =>
+  get(
+    `/produtos/${produtoId}/analise`,
+    janelaDias === undefined || janelaDias === null ? undefined : { janela_dias: janelaDias }
+  );
 
 // UC09: alertas mais recentes
 export const listarAlertas = (limite = 5) => get('/alertas', { limite });
+
+// UC08: ativar/desativar alerta e definir/limpar o preço-alvo.
+// `campos` aceita { alertaAtivo?: boolean, precoAlvo?: number | null }.
+// precoAlvo null limpa o preço-alvo; vai como string ("1299.90") para o Decimal do Pydantic.
+export async function atualizarMonitoramento(monitoramentoId, { alertaAtivo, precoAlvo }) {
+  const corpo = {};
+  if (alertaAtivo !== undefined) corpo.alerta_ativo = alertaAtivo;
+  if (precoAlvo !== undefined) {
+    corpo.preco_alvo = precoAlvo === null ? null : Number(precoAlvo).toFixed(2);
+  }
+  try {
+    const response = await api.patch(`/monitoramentos/${monitoramentoId}`, corpo);
+    return response.data;
+  } catch (error) {
+    throw traduzirErro(error);
+  }
+}
+
+// RF17/RN05: remove só o vínculo do usuário; o histórico de preços do produto é preservado.
+export async function removerMonitoramento(monitoramentoId) {
+  try {
+    await api.delete(`/monitoramentos/${monitoramentoId}`);
+  } catch (error) {
+    throw traduzirErro(error);
+  }
+}

@@ -24,8 +24,6 @@ function Alertas() {
 
   useEffect(() => {
     let ativo = true;
-    setCarregando(true);
-    setErro('');
     listarAlertas(200).then(
       (dados) => {
         if (!ativo) return;

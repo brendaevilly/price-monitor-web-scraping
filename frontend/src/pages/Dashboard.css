@@ -312,7 +312,7 @@
 
 .metricas {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin: 16px 0 0;
 }
@@ -651,3 +651,289 @@ tbody tr:last-child td {
     scroll-behavior: auto;
   }
 }
+
+/* ---------- configuração do monitoramento (UC08) e remoção (RF17) ---------- */
+
+.menu-flutuante button.menu-perigo {
+  color: var(--erro);
+}
+
+.aviso-ok {
+  background: var(--verde-claro);
+  color: var(--verde);
+}
+
+.config {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--borda);
+}
+
+.config h3 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+
+.config-alerta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  cursor: pointer;
+}
+
+.config-alvo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.config-alvo input {
+  width: 160px;
+  padding: 8px 10px;
+  border: 1px solid var(--linha-cabecalho);
+  border-radius: 8px;
+  font: inherit;
+}
+
+.btn-primario,
+.btn-perigo,
+.btn-perigo-cheio,
+.modal-acoes button {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--linha-cabecalho);
+  background: var(--superficie);
+  color: var(--texto);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn-primario {
+  background: var(--azul);
+  border-color: var(--azul);
+  color: #fff;
+}
+
+.btn-perigo {
+  color: var(--erro);
+  border-color: var(--erro);
+}
+
+.btn-perigo-cheio {
+  background: var(--erro);
+  border-color: var(--erro);
+  color: #fff;
+}
+
+.btn-link {
+  border: 0;
+  background: none;
+  color: var(--azul);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.config button:disabled,
+.modal-acoes button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.config-msg {
+  min-height: 1.45em; /* reserva a linha para o layout não pular */
+  margin: 8px 0 14px;
+  font-size: 14px;
+  color: var(--verde);
+}
+
+.config-msg[data-tipo='erro'] {
+  color: var(--erro);
+}
+
+.modal-fundo {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(14, 26, 51, 0.5);
+}
+
+.modal {
+  width: min(440px, 100%);
+  padding: 24px;
+  border-radius: 14px;
+  background: var(--superficie);
+  box-shadow: 0 16px 48px rgba(14, 26, 51, 0.3);
+}
+
+.modal h2 {
+  margin: 0 0 10px;
+  font-size: 20px;
+}
+
+.modal p {
+  margin: 0 0 12px;
+}
+
+.modal-acoes {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* ---------- gráfico cronológico de preços ---------- */
+.grafico-container {
+  width: 100%;
+  min-width: 0;
+  margin-top: 8px;
+}
+
+.grafico-responsivo {
+  width: 100%;
+  height: clamp(250px, 38vw, 340px);
+  min-width: 0;
+}
+
+.grafico-tooltip {
+  display: grid;
+  gap: 4px;
+  padding: 9px 11px;
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  background: var(--superficie);
+  box-shadow: var(--sombra-leve);
+  color: var(--texto);
+  font-size: 13px;
+}
+
+.grafico-tooltip span {
+  color: var(--texto-suave);
+}
+
+.grafico-legenda {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  margin: 8px 0 0 74px;
+  color: var(--texto-suave);
+  font-size: 12px;
+}
+
+.grafico-legenda span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.grafico-legenda i {
+  display: inline-block;
+  width: 18px;
+  height: 0;
+  border-top: 3px solid;
+}
+
+.legenda-preco {
+  border-color: var(--azul-linha) !important;
+}
+
+.legenda-media {
+  border-color: #854d0e !important;
+  border-top-style: dashed !important;
+}
+
+.legenda-alvo {
+  border-color: var(--verde) !important;
+  border-top-style: dashed !important;
+}
+
+@media (max-width: 560px) {
+  .grafico-responsivo {
+    height: 270px;
+  }
+
+  .grafico-legenda {
+    gap: 8px 12px;
+    margin-left: 0;
+    font-size: 11px;
+  }
+}
+
+/* ---------- relatório de análise ---------- */
+.relatorio-filtro {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--texto-suave);
+  font-size: 13px;
+}
+
+.relatorio-filtro select {
+  max-width: 100%;
+  padding: 8px 30px 8px 10px;
+  border: 1px solid var(--borda);
+  border-radius: 9px;
+  background: var(--superficie);
+  color: var(--texto);
+  font: inherit;
+}
+
+.relatorio-rolagem {
+  overflow-x: auto;
+}
+
+.tabela-relatorio {
+  min-width: 720px;
+}
+
+.relatorio-produto,
+.relatorio-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--azul);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.relatorio-produto {
+  color: var(--texto);
+  font-weight: 700;
+}
+
+.relatorio-produto:hover,
+.relatorio-link:hover {
+  text-decoration: underline;
+}
+
+.tabela-relatorio td small {
+  display: block;
+  color: var(--texto-suave);
+  font-size: 11px;
+}
+
+.relatorio-queda {
+  color: var(--verde);
+  font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  .relatorio-filtro {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .relatorio-filtro select {
+    flex: 1;
+  }
+}
+

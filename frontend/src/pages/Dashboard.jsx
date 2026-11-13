@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import AnaliseDetalhe from '../components/AnaliseDetalhe';
 import {
   IconeAlertas,
   IconeCalendario,
@@ -16,12 +27,14 @@ import {
   IconeSetaBaixo,
 } from '../components/Icones';
 import {
-  buscarAnalise,
+  atualizarMonitoramento,
   buscarHistorico,
   listarAlertas,
   listarProdutos,
+  removerMonitoramento,
   resumoAnalise,
 } from '../services/dashboardService';
+import { formatarPreco, parsePreco } from '../utils/produto';
 import './Dashboard.css';
 
 /* ---------- formatação ---------- */
@@ -46,24 +59,37 @@ const dataCurta = (t) =>
 
 const dataHora = (iso) =>
   new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+const pct = (valor) =>
+  `${Number(valor).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 
-const pct = (v) =>
-  `${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 
-/* ---------- rótulos (valores reais da API) ---------- */
-
-const CLASSIFICACAO = {
-  sem_dados: { rotulo: 'Dados insuficientes', classe: 'neutro' },
-  sem_queda: { rotulo: 'Sem queda', classe: 'neutro' },
-  pequena_queda: { rotulo: 'Pequena queda', classe: 'pequena' },
-  queda_relevante: { rotulo: 'Queda relevante', classe: 'relevante' },
-  grande_queda: { rotulo: 'Grande queda', classe: 'grande' },
-};
 
 const TIPO_ALERTA = {
   queda_preco: 'Queda de preço',
   preco_alvo: 'Preço-alvo atingido',
 };
+
+
+const CLASSIFICACAO_ANALISE = {
+  sem_dados: 'Dados insuficientes',
+  sem_queda: 'Sem queda',
+  pequena_queda: 'Pequena queda',
+  queda_relevante: 'Queda relevante',
+  grande_queda: 'Grande queda',
+};
+
+function variacaoRelatorio(item) {
+  const candidatas = [
+    { valor: num(item.variacao_percentual_media), origem: 'vs. média' },
+    { valor: num(item.variacao_percentual_anterior), origem: 'vs. coleta anterior' },
+  ].filter((candidata) => candidata.valor !== null);
+  if (candidatas.length === 0) return { valor: null, origem: null };
+  const quedas = candidatas.filter((candidata) => candidata.valor > 0);
+  if (quedas.length > 0) {
+    return quedas.reduce((maior, atual) => (atual.valor > maior.valor ? atual : maior));
+  }
+  return candidatas.find((candidata) => candidata.origem === 'vs. média') ?? candidatas[0];
+}
 
 const PERIODOS = [
   { valor: 7, rotulo: 'Últimos 7 dias' },
@@ -72,7 +98,8 @@ const PERIODOS = [
   { valor: 0, rotulo: 'Todo o histórico' },
 ];
 
-function statusDoAlerta(precoAtual, precoAlvo) {
+function statusDoAlerta(precoAtual, precoAlvo, alertaAtivo = true) {
+  if (!alertaAtivo) return { rotulo: 'Alerta desativado', classe: 'neutro' };
   const atual = num(precoAtual);
   const alvo = num(precoAlvo);
   if (atual === null) return { rotulo: 'Sem dados', classe: 'neutro' };
@@ -81,125 +108,257 @@ function statusDoAlerta(precoAtual, precoAlvo) {
   return { rotulo: 'Em monitoramento', classe: 'monitorando' };
 }
 
-// UC07 3a: textos em português quando não há dados suficientes
-function mensagemAnalise(analise) {
-  if (analise.classificacao === 'sem_dados') {
-    return `Dados insuficientes para classificar a queda: ${analise.amostras_media} de ${analise.amostras_minimas} coletas anteriores necessárias.`;
-  }
-  const v = num(analise.variacao_percentual_media);
-  if (v === null) return null;
-  if (v > 0) return `Preço atual ${pct(v)} abaixo da média histórica.`;
-  if (v < 0) return `Preço atual ${pct(Math.abs(v))} acima da média histórica.`;
-  return 'Preço atual igual à média histórica.';
-}
+/* ---------- gráfico cronológico de preços (Recharts) ---------- */
 
-function mensagemAnterior(analise) {
-  const v = num(analise.variacao_percentual_anterior);
-  if (v === null) return null;
-  if (v > 0) return `${pct(v)} abaixo da coleta anterior.`;
-  if (v < 0) return `${pct(Math.abs(v))} acima da coleta anterior.`;
-  return 'Igual à coleta anterior.';
-}
-
-/* ---------- gráfico (SVG, sem dependências) ---------- */
-
-// Escolhe limites e passos "redondos" (R$ 1.000, 2.000, 3.000...) como no design
-function escalaBonita(min, max) {
-  const bruto = (max - min) / 3;
-  const mag = 10 ** Math.floor(Math.log10(bruto));
-  const frac = bruto / mag;
-  const passo = (frac <= 1 ? 1 : frac <= 2 ? 2 : frac <= 5 ? 5 : 10) * mag;
-  const ini = Math.floor(min / passo) * passo;
-  const fim = Math.ceil(max / passo) * passo;
-  const ticks = [];
-  for (let v = ini; v <= fim + passo / 2; v += passo) {
-    ticks.push(Math.round(v * 100) / 100);
-  }
-  return { min: ini, max: fim, ticks, passo };
-}
-
-function GraficoPrecos({ pontos }) {
-  const W = 640;
-  const H = 270;
-  const pad = { t: 14, r: 16, b: 34, l: 84 };
-  const larguraUtil = W - pad.l - pad.r;
-  const alturaUtil = H - pad.t - pad.b;
-
-  const valores = pontos.map((p) => p.preco);
-  let min = Math.min(...valores);
-  let max = Math.max(...valores);
-  if (min === max) {
-    min -= 1;
-    max += 1;
-  }
-  const escala = escalaBonita(min, max);
-  const formatar = escala.passo < 1 ? brl : brlInteiro;
-
-  const t0 = pontos[0].t;
-  const t1 = pontos[pontos.length - 1].t;
-  const x = (t) => (t1 === t0 ? pad.l + larguraUtil / 2 : pad.l + ((t - t0) / (t1 - t0)) * larguraUtil);
-  const y = (v) => pad.t + (1 - (v - escala.min) / (escala.max - escala.min)) * alturaUtil;
-
-  const linha = pontos
-    .map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.t).toFixed(1)} ${y(p.preco).toFixed(1)}`)
-    .join(' ');
-
-  // Datas espaçadas de forma uniforme no tempo, sem repetir o mesmo dia
-  const quantidade = t1 === t0 ? 1 : 7;
-  const rotulosX = [];
-  for (let i = 0; i < quantidade; i += 1) {
-    const t = quantidade === 1 ? t0 : t0 + (i * (t1 - t0)) / (quantidade - 1);
-    const texto = dataCurta(t);
-    if (rotulosX.length === 0 || rotulosX[rotulosX.length - 1].texto !== texto) {
-      rotulosX.push({ t, texto, i });
-    }
-  }
+function TooltipPreco({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const ponto = payload[0].payload;
 
   return (
-    <svg
-      className="grafico"
-      viewBox={`0 0 ${W} ${H}`}
-      role="img"
-      aria-label={`Variação de preço, de ${moeda(valores[0])} a ${moeda(valores[valores.length - 1])}`}
-    >
-      {escala.ticks.map((v) => (
-        <text key={v} className="grafico-eixo" x={pad.l - 14} y={y(v) + 4} textAnchor="end">
-          {formatar.format(v)}
-        </text>
-      ))}
-      {rotulosX.map((r) => (
-        <text
-          key={r.i}
-          className="grafico-eixo"
-          x={x(r.t)}
-          y={H - 8}
-          textAnchor={r.i === 0 ? 'start' : r.i === quantidade - 1 ? 'end' : 'middle'}
-        >
-          {r.texto}
-        </text>
-      ))}
-      <path className="grafico-sombra" d={linha} transform="translate(0 4)" />
-      <path className="grafico-linha" d={linha} />
-      {pontos.length <= 60 &&
-        pontos.map((p) => (
-          <circle key={p.t} className="grafico-alvo" cx={x(p.t)} cy={y(p.preco)} r="7">
-            <title>{`${dataHora(p.iso)}: ${moeda(p.preco)}`}</title>
-          </circle>
-        ))}
-    </svg>
+    <div className="grafico-tooltip">
+      <span>{dataHora(ponto.iso)}</span>
+      <strong>{moeda(ponto.preco)}</strong>
+    </div>
   );
 }
 
-/* ---------- detalhe do produto selecionado (UC06 + UC07) ---------- */
+function GraficoPrecos({ pontos, precoAlvo }) {
+  // A média acompanha exatamente as coletas visíveis no período selecionado.
+  const mediaJanela = pontos.reduce((total, ponto) => total + ponto.preco, 0) / pontos.length;
+  const alvoValido = Number.isFinite(precoAlvo) && precoAlvo > 0 ? precoAlvo : null;
+  const valores = [
+    ...pontos.map((ponto) => ponto.preco),
+    mediaJanela,
+    ...(alvoValido === null ? [] : [alvoValido]),
+  ];
+  const minimo = Math.min(...valores);
+  const maximo = Math.max(...valores);
+  const margem = minimo === maximo ? Math.max(Math.abs(minimo) * 0.05, 1) : (maximo - minimo) * 0.12;
+  const dominioY = [Math.max(0, minimo - margem), maximo + margem];
+  const primeiroTempo = pontos[0].t;
+  const ultimoTempo = pontos[pontos.length - 1].t;
+  const dominioX = primeiroTempo === ultimoTempo
+    ? [primeiroTempo - 86400000, ultimoTempo + 86400000]
+    : ['dataMin', 'dataMax'];
 
-function PainelDetalhe({ produto, detalhe, periodo }) {
+  return (
+    <div className="grafico-container">
+      <div
+        className="grafico-responsivo"
+        role="img"
+        aria-label={`Histórico cronológico: ${pontos.length} ${pontos.length === 1 ? 'coleta' : 'coletas'}, média do período ${moeda(mediaJanela)}${alvoValido === null ? '' : ` e preço-alvo ${moeda(alvoValido)}`}`}
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={pontos} margin={{ top: 14, right: 12, bottom: 6, left: 0 }}>
+            <CartesianGrid stroke="#e3e8f0" strokeDasharray="3 3" vertical={false} />
+            <XAxis
+              dataKey="t"
+              type="number"
+              scale="time"
+              domain={dominioX}
+              tickFormatter={dataCurta}
+              tick={{ fill: '#7d8aa3', fontSize: 11 }}
+              minTickGap={24}
+              tickLine={false}
+              axisLine={{ stroke: '#d7deea' }}
+            />
+            <YAxis
+              domain={dominioY}
+              tickFormatter={(valor) => brlInteiro.format(valor)}
+              tick={{ fill: '#7d8aa3', fontSize: 11 }}
+              width={74}
+              tickLine={false}
+              axisLine={false}
+            />
+            <Tooltip content={<TooltipPreco />} />
+            <ReferenceLine
+              y={mediaJanela}
+              stroke="#854d0e"
+              strokeDasharray="6 4"
+              strokeWidth={2}
+            />
+            {alvoValido !== null && (
+              <ReferenceLine
+                y={alvoValido}
+                stroke="#1f7a3d"
+                strokeDasharray="4 4"
+                strokeWidth={2}
+              />
+            )}
+            <Line
+              type="linear"
+              dataKey="preco"
+              name="Preço coletado"
+              stroke="#3b8cf7"
+              strokeWidth={2.5}
+              dot={pontos.length <= 40 ? { r: 3, fill: '#3b8cf7', strokeWidth: 0 } : false}
+              activeDot={{ r: 5 }}
+              isAnimationActive={false}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="grafico-legenda" aria-label="Legenda do gráfico">
+        <span><i className="legenda-preco" /> Preço coletado</span>
+        <span><i className="legenda-media" /> Média do período: {moeda(mediaJanela)}</span>
+        {alvoValido !== null && (
+          <span><i className="legenda-alvo" /> Preço-alvo: {moeda(alvoValido)}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const alvoParaCampo = (v) => (num(v) === null ? '' : formatarPreco(Math.round(num(v) * 100)));
+
+function ConfiguracaoMonitoramento({ produto, onAtualizar, onPedirRemocao }) {
+  const [campoAlvo, setCampoAlvo] = useState(() => alvoParaCampo(produto.preco_alvo));
+  const [salvando, setSalvando] = useState(false);
+  const [msg, setMsg] = useState(null); // { tipo: 'ok' | 'erro', texto }
+
+  const alvoSalvo = alvoParaCampo(produto.preco_alvo);
+  const alvoMudou = campoAlvo !== alvoSalvo;
+
+  async function executar(campos, textoOk) {
+    setSalvando(true);
+    setMsg(null);
+    try {
+      await onAtualizar(produto.monitoramento_id, campos);
+      setMsg({ tipo: 'ok', texto: textoOk });
+    } catch (e) {
+      setMsg({ tipo: 'erro', texto: e.message });
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  function salvarAlvo(e) {
+    e.preventDefault();
+    const valor = parsePreco(campoAlvo);
+    if (campoAlvo && (valor === null || valor <= 0)) {
+      setMsg({ tipo: 'erro', texto: 'Informe um preço-alvo maior que zero.' });
+      return;
+    }
+    executar(
+      { precoAlvo: valor },
+      valor === null ? 'Preço-alvo removido.' : 'Preço-alvo salvo.'
+    );
+  }
+
+  return (
+    <section className="config" aria-label={`Configurações de ${produto.nome}`}>
+      <h3>Configurações do monitoramento</h3>
+
+      <label className="config-alerta">
+        <input
+          type="checkbox"
+          role="switch"
+          checked={produto.alerta_ativo}
+          disabled={salvando}
+          onChange={(e) =>
+            executar(
+              { alertaAtivo: e.target.checked },
+              e.target.checked ? 'Alerta ativado.' : 'Alerta desativado.'
+            )
+          }
+        />
+        <span>Receber alertas deste produto por e-mail</span>
+      </label>
+
+      <form className="config-alvo" onSubmit={salvarAlvo} noValidate>
+        <label htmlFor={`alvo-${produto.monitoramento_id}`}>Preço-alvo</label>
+        <input
+          id={`alvo-${produto.monitoramento_id}`}
+          inputMode="numeric"
+          placeholder="R$ 0,00"
+          value={campoAlvo}
+          disabled={salvando}
+          onChange={(e) => setCampoAlvo(formatarPreco(e.target.value))}
+        />
+        <button type="submit" className="btn-primario" disabled={salvando || !alvoMudou}>
+          Salvar
+        </button>
+        {produto.preco_alvo !== null && produto.preco_alvo !== undefined && (
+          <button
+            type="button"
+            className="btn-link"
+            disabled={salvando}
+            onClick={() => {
+              setCampoAlvo('');
+              executar({ precoAlvo: null }, 'Preço-alvo removido.');
+            }}
+          >
+            Limpar
+          </button>
+        )}
+      </form>
+
+      <p className="config-msg" role="status" data-tipo={msg?.tipo}>
+        {msg?.texto ?? ''}
+      </p>
+
+      <button type="button" className="btn-perigo" onClick={() => onPedirRemocao(produto)}>
+        Remover da lista
+      </button>
+    </section>
+  );
+}
+
+function ConfirmarRemocao({ produto, removendo, erro, onCancelar, onConfirmar }) {
+  const cancelarRef = useRef(null);
+
+  useEffect(() => {
+    cancelarRef.current?.focus();
+    const esc = (e) => {
+      if (e.key === 'Escape' && !removendo) onCancelar();
+    };
+    document.addEventListener('keydown', esc);
+    return () => document.removeEventListener('keydown', esc);
+  }, [removendo, onCancelar]);
+
+  return (
+    <div className="modal-fundo" onMouseDown={() => !removendo && onCancelar()}>
+      <div
+        className="modal"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="modal-titulo"
+        aria-describedby="modal-texto"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <h2 id="modal-titulo">Remover da lista?</h2>
+        <p id="modal-texto">
+          <strong>{produto.nome}</strong> deixará de aparecer na sua lista e você não receberá mais
+          alertas dele. O histórico de preços já coletado não é apagado: se você voltar a monitorar
+          este produto, ele estará lá.
+        </p>
+        {erro && <p className="erro" role="alert">{erro}</p>}
+        <div className="modal-acoes">
+          <button type="button" ref={cancelarRef} onClick={onCancelar} disabled={removendo}>
+            Cancelar
+          </button>
+          <button type="button" className="btn-perigo-cheio" onClick={onConfirmar} disabled={removendo}>
+            {removendo ? 'Removendo…' : 'Remover'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+function PainelDetalhe({ produto, detalhe, periodo, onAtualizar, onPedirRemocao }) {
   const pontos = useMemo(() => {
     const coletas = detalhe.historico?.coletas ?? [];
-    const todos = coletas.map((c) => ({
-      t: new Date(c.data_hora_coleta).getTime(),
-      iso: c.data_hora_coleta,
-      preco: Number(c.preco),
-    }));
+    const todos = coletas
+      .map((c) => ({
+        t: new Date(c.data_hora_coleta).getTime(),
+        iso: c.data_hora_coleta,
+        preco: Number(c.preco),
+      }))
+      .filter((ponto) => Number.isFinite(ponto.t) && Number.isFinite(ponto.preco) && ponto.preco > 0)
+      .sort((a, b) => a.t - b.t);
     if (periodo === 0 || todos.length === 0) return todos;
     // Janela contada a partir da coleta mais recente (mesmo critério do back)
     const corte = todos[todos.length - 1].t - periodo * 86400000;
@@ -216,13 +375,7 @@ function PainelDetalhe({ produto, detalhe, periodo }) {
     return <p className="erro" role="alert">{detalhe.erro}</p>;
   }
 
-  const { historico, analise } = detalhe;
-  const classe = CLASSIFICACAO[analise.classificacao] ?? {
-    rotulo: analise.classificacao,
-    classe: 'neutro',
-  };
-  const textoAnalise = mensagemAnalise(analise);
-  const textoAnterior = mensagemAnterior(analise);
+  const { historico } = detalhe;
 
   let corpoGrafico;
   if (historico.coletas.length === 0) {
@@ -230,7 +383,7 @@ function PainelDetalhe({ produto, detalhe, periodo }) {
   } else if (pontos.length === 0) {
     corpoGrafico = <p className="vazio">Nenhuma coleta no período selecionado.</p>;
   } else {
-    corpoGrafico = <GraficoPrecos pontos={pontos} />;
+    corpoGrafico = <GraficoPrecos pontos={pontos} precoAlvo={num(produto.preco_alvo)} />;
   }
 
   return (
@@ -248,23 +401,16 @@ function PainelDetalhe({ produto, detalhe, periodo }) {
           <dt>Menor preço</dt>
           <dd>{moeda(historico.menor_preco)}</dd>
         </div>
-        <div>
-          <dt>Média histórica</dt>
-          <dd>{moeda(historico.media_historica)}</dd>
-        </div>
-        <div>
-          <dt>Classificação da queda</dt>
-          <dd>
-            <span className={`selo selo-${classe.classe}`}>{classe.rotulo}</span>
-          </dd>
-        </div>
       </dl>
 
-      {(textoAnalise || textoAnterior) && (
-        <p className="nota-analise">
-          {textoAnalise} {textoAnterior}
-        </p>
-      )}
+      <AnaliseDetalhe produtoId={produto.produto_id} />
+
+      <ConfiguracaoMonitoramento
+        key={produto.monitoramento_id}
+        produto={produto}
+        onAtualizar={onAtualizar}
+        onPedirRemocao={onPedirRemocao}
+      />
     </>
   );
 }
@@ -277,6 +423,8 @@ function Dashboard() {
   const [carga, setCarga] = useState({ carregando: true, erro: null, avisoResumo: null });
   const [produtos, setProdutos] = useState([]);
   const [resumo, setResumo] = useState({});
+  const [relatorio, setRelatorio] = useState({ produtos: [], janela_dias: null, erro: null });
+  const [filtroClassificacao, setFiltroClassificacao] = useState('todas');
   const [alertas, setAlertas] = useState({ itens: [], erro: null });
   const [busca, setBusca] = useState('');
   const [periodo, setPeriodo] = useState(30);
@@ -286,8 +434,11 @@ function Dashboard() {
     carregando: false,
     erro: null,
     historico: null,
-    analise: null,
   });
+
+  const [confirmando, setConfirmando] = useState(null); // produto aguardando confirmação de remoção
+  const [remocao, setRemocao] = useState({ removendo: false, erro: null });
+  const [aviso, setAviso] = useState(null); // feedback da tabela (kebab / remoção)
 
   const requisicao = useRef(0);
   const detalheRef = useRef(null);
@@ -295,15 +446,15 @@ function Dashboard() {
   const selecionar = useCallback(async (id, { rolar = true } = {}) => {
     setSelecionadoId(id);
     const atual = ++requisicao.current;
-    setDetalhe({ carregando: true, erro: null, historico: null, analise: null });
+    setDetalhe({ carregando: true, erro: null, historico: null });
     if (rolar) detalheRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     try {
-      const [historico, analise] = await Promise.all([buscarHistorico(id), buscarAnalise(id)]);
+      const historico = await buscarHistorico(id);
       if (atual !== requisicao.current) return; // resposta de uma seleção antiga
-      setDetalhe({ carregando: false, erro: null, historico, analise });
+      setDetalhe({ carregando: false, erro: null, historico });
     } catch (e) {
       if (atual !== requisicao.current) return;
-      setDetalhe({ carregando: false, erro: e.message, historico: null, analise: null });
+      setDetalhe({ carregando: false, erro: e.message, historico: null });
     }
   }, []);
 
@@ -326,6 +477,11 @@ function Dashboard() {
         r.status === 'fulfilled'
           ? Object.fromEntries(r.value.produtos.map((item) => [item.produto_id, item]))
           : {}
+      );
+      setRelatorio(
+        r.status === 'fulfilled'
+          ? { produtos: r.value.produtos, janela_dias: r.value.janela_dias, erro: null }
+          : { produtos: [], janela_dias: null, erro: r.reason.message }
       );
       setAlertas(
         a.status === 'fulfilled'
@@ -365,6 +521,71 @@ function Dashboard() {
     };
   }, [menuAberto]);
 
+  // PATCH /monitoramentos/{id}: aplica a resposta do servidor na lista (fonte da verdade)
+  const atualizar = useCallback(async (monitoramentoId, campos) => {
+    const atualizado = await atualizarMonitoramento(monitoramentoId, campos);
+    setProdutos((lista) =>
+      lista.map((p) => (p.monitoramento_id === monitoramentoId ? { ...p, ...atualizado } : p))
+    );
+    return atualizado;
+  }, []);
+
+  const alternarAlerta = useCallback(
+    async (p) => {
+      setMenuAberto(null);
+      setAviso(null);
+      try {
+        await atualizar(p.monitoramento_id, { alertaAtivo: !p.alerta_ativo });
+        setAviso({
+          tipo: 'ok',
+          texto: `Alerta ${p.alerta_ativo ? 'desativado' : 'ativado'} para ${p.nome}.`,
+        });
+      } catch (e) {
+        setAviso({ tipo: 'erro', texto: e.message });
+      }
+    },
+    [atualizar]
+  );
+
+  const pedirRemocao = useCallback((p) => {
+    setMenuAberto(null);
+    setRemocao({ removendo: false, erro: null });
+    setConfirmando(p);
+  }, []);
+
+  const cancelarRemocao = useCallback(() => setConfirmando(null), []);
+
+  // DELETE /monitoramentos/{id}: só o vínculo some; o histórico do produto fica no banco (RN05)
+  async function confirmarRemocao() {
+    const p = confirmando;
+    setRemocao({ removendo: true, erro: null });
+    try {
+      await removerMonitoramento(p.monitoramento_id);
+    } catch (e) {
+      setRemocao({ removendo: false, erro: e.message });
+      return;
+    }
+    const restantes = produtos.filter((x) => x.monitoramento_id !== p.monitoramento_id);
+    setProdutos(restantes);
+    setResumo((atual) => {
+      const resto = { ...atual };
+      delete resto[p.produto_id];
+      return resto;
+    });
+    setConfirmando(null);
+    setRemocao({ removendo: false, erro: null });
+    setAviso({ tipo: 'ok', texto: `${p.nome} foi removido da sua lista.` });
+    if (p.produto_id === selecionadoId) {
+      if (restantes.length > 0) {
+        selecionar(restantes[0].produto_id, { rolar: false });
+      } else {
+        requisicao.current += 1; // descarta resposta em andamento
+        setSelecionadoId(null);
+        setDetalhe({ carregando: false, erro: null, historico: null });
+      }
+    }
+  }
+
   const produtoSelecionado = produtos.find((p) => p.produto_id === selecionadoId) ?? null;
 
   const visiveis = useMemo(() => {
@@ -376,6 +597,22 @@ function Dashboard() {
   }, [produtos, busca]);
 
   const alertasAtivos = useMemo(() => produtos.filter((p) => p.alerta_ativo).length, [produtos]);
+
+  const linhasRelatorio = useMemo(() => {
+    const porId = new Map(produtos.map((produto) => [produto.produto_id, produto]));
+    return relatorio.produtos
+      .map((item) => ({
+        ...item,
+        lojaNome: porId.get(item.produto_id)?.loja?.nome ?? '—',
+        variacao: variacaoRelatorio(item),
+      }))
+      .filter((item) => filtroClassificacao === 'todas' || item.classificacao === filtroClassificacao)
+      .sort((a, b) => {
+        const quedaA = a.variacao.valor === null ? -Infinity : Math.max(a.variacao.valor, 0);
+        const quedaB = b.variacao.valor === null ? -Infinity : Math.max(b.variacao.valor, 0);
+        return quedaB - quedaA || a.nome.localeCompare(b.nome, 'pt-BR');
+      });
+  }, [relatorio.produtos, produtos, filtroClassificacao]);
 
   // Economia = quanto o preço atual está abaixo da média histórica
   const maiorEconomia = useMemo(() => {
@@ -414,13 +651,7 @@ function Dashboard() {
           <Link to="/produtos/novo" className="app-nav-item">
             <IconePacoteBusca /> Produtos
           </Link>
-          {/* Telas ainda não criadas: viram <Link> quando as rotas existirem */}
-          <button type="button" className="app-nav-item desativado" aria-disabled="true">
-            <IconeAlertas /> Alertas
-          </button>
-          <button type="button" className="app-nav-item desativado" aria-disabled="true">
-            <IconeConfig /> Configurações
-          </button>
+        
         </nav>
       </aside>
 
@@ -511,7 +742,113 @@ function Dashboard() {
                     <IconeSetaBaixo className="periodo-dir" tamanho={16} />
                   </label>
                 </div>
-                <PainelDetalhe produto={produtoSelecionado} detalhe={detalhe} periodo={periodo} />
+                <PainelDetalhe
+                  produto={produtoSelecionado}
+                  detalhe={detalhe}
+                  periodo={periodo}
+                  onAtualizar={atualizar}
+                  onPedirRemocao={pedirRemocao}
+                />
+              </section>
+
+              <section className="painel painel-relatorio" aria-labelledby="titulo-relatorio">
+                <div className="painel-topo">
+                  <div className="painel-titulo">
+                    <IconeGrafico className="painel-icone" tamanho={36} strokeWidth={1.5} />
+                    <div>
+                      <h2 id="titulo-relatorio">Relatório de análise</h2>
+                      <p className="sub">
+                        Produtos ordenados pela maior queda de preço
+                        {relatorio.janela_dias !== null && (
+                          relatorio.janela_dias === 0
+                            ? ' em relação a todo o histórico.'
+                            : ` na janela de ${relatorio.janela_dias} dias.`
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <label className="relatorio-filtro">
+                    <span>Classificação</span>
+                    <select
+                      value={filtroClassificacao}
+                      onChange={(e) => setFiltroClassificacao(e.target.value)}
+                    >
+                      <option value="todas">Todas as faixas</option>
+                      {Object.entries(CLASSIFICACAO_ANALISE).map(([valor, rotulo]) => (
+                        <option key={valor} value={valor}>{rotulo}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                {relatorio.erro ? (
+                  <p className="aviso" role="alert">
+                    Não foi possível carregar o relatório: {relatorio.erro}
+                  </p>
+                ) : linhasRelatorio.length === 0 ? (
+                  <p className="vazio">
+                    {relatorio.produtos.length === 0
+                      ? 'Não há produtos para analisar.'
+                      : 'Nenhum produto corresponde à classificação selecionada.'}
+                  </p>
+                ) : (
+                  <div className="tabela-rolagem relatorio-rolagem">
+                    <table className="tabela-relatorio">
+                      <thead>
+                        <tr>
+                          <th scope="col">Produto</th>
+                          <th scope="col">Loja</th>
+                          <th scope="col">Preço atual</th>
+                          <th scope="col">Variação</th>
+                          <th scope="col">Classificação</th>
+                          <th scope="col">Detalhes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {linhasRelatorio.map((item) => (
+                          <tr key={item.produto_id}>
+                            <td>
+                              <button
+                                type="button"
+                                className="relatorio-produto"
+                                onClick={() => selecionar(item.produto_id)}
+                              >
+                                {item.nome}
+                              </button>
+                            </td>
+                            <td>{item.lojaNome}</td>
+                            <td>{moeda(item.preco_atual)}</td>
+                            <td>
+                              {item.variacao.valor === null ? (
+                                '—'
+                              ) : (
+                                <span className={item.variacao.valor > 0 ? 'relatorio-queda' : ''}>
+                                  {item.variacao.valor > 0 ? '−' : item.variacao.valor < 0 ? '+' : ''}
+                                  {pct(Math.abs(item.variacao.valor))}
+                                  <small>{item.variacao.origem}</small>
+                                </span>
+                              )}
+                            </td>
+                            <td>
+                              <span className={`selo selo-${item.classificacao === 'queda_relevante' ? 'relevante' : item.classificacao === 'grande_queda' ? 'grande' : item.classificacao === 'pequena_queda' ? 'pequena' : 'neutro'}`}>
+                                {CLASSIFICACAO_ANALISE[item.classificacao] ?? item.classificacao}
+                              </span>
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="relatorio-link"
+                                onClick={() => selecionar(item.produto_id)}
+                              >
+                                Ver no dashboard
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </section>
 
               <section className="painel" aria-labelledby="titulo-produtos">
@@ -534,6 +871,15 @@ function Dashboard() {
                     />
                   </label>
                 </div>
+
+                {aviso && (
+                  <p
+                    className={aviso.tipo === 'erro' ? 'erro' : 'aviso aviso-ok'}
+                    role={aviso.tipo === 'erro' ? 'alert' : 'status'}
+                  >
+                    {aviso.texto}
+                  </p>
+                )}
 
                 {produtos.length === 0 ? (
                   <p className="vazio">
@@ -560,7 +906,7 @@ function Dashboard() {
                       <tbody>
                         {visiveis.map((p) => {
                           const r = resumo[p.produto_id];
-                          const status = statusDoAlerta(r?.preco_atual, p.preco_alvo);
+                          const status = statusDoAlerta(r?.preco_atual, p.preco_alvo, p.alerta_ativo);
                           const selecionado = p.produto_id === selecionadoId;
                           const menuDoProduto = menuAberto === p.produto_id;
                           return (
@@ -623,6 +969,21 @@ function Dashboard() {
                                       >
                                         Ver histórico
                                       </button>
+                                      <button
+                                        type="button"
+                                        role="menuitem"
+                                        onClick={() => alternarAlerta(p)}
+                                      >
+                                        {p.alerta_ativo ? 'Desativar alerta' : 'Ativar alerta'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        role="menuitem"
+                                        className="menu-perigo"
+                                        onClick={() => pedirRemocao(p)}
+                                      >
+                                        Remover da lista
+                                      </button>
                                     </div>
                                   )}
                                 </div>
@@ -673,6 +1034,16 @@ function Dashboard() {
                 )}
               </section>
             </>
+          )}
+
+          {confirmando && (
+            <ConfirmarRemocao
+              produto={confirmando}
+              removendo={remocao.removendo}
+              erro={remocao.erro}
+              onCancelar={cancelarRemocao}
+              onConfirmar={confirmarRemocao}
+            />
           )}
         </div>
         </main>
