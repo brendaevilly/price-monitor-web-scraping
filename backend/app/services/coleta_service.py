@@ -86,14 +86,11 @@ class ResultadoColeta:
     tentativas: int
     historico_id: Optional[UUID] = None
     erro: Optional[str] = None
-<<<<<<< HEAD
     # Issue #105: `preco` é o valor medido (produto + frete). 0 = frete grátis;
     # None = a página não informou o frete (então `preco` é só o produto).
     frete: Optional[Decimal] = None
     preco_produto: Optional[Decimal] = None
-=======
     motivo_falha: Optional[str] = None
->>>>>>> fc95810ab81209f9418926a060684f6f9af4bddb
 
 
 def normalizar_preco(valor: str | int | float | Decimal | None) -> Optional[Decimal]:
@@ -620,51 +617,16 @@ class ColetaService:
                         "A loja bloqueou a requisição automática "
                         "(página de verificação de tráfego).",
                     )
-<<<<<<< HEAD
                 preco_produto = extrair_preco(resposta.text, dominio)
                 if preco_produto is None:
-                    raise ValueError("Preço não encontrado na página do produto.")
+                    raise FalhaColeta(
+                        MOTIVO_LAYOUT, _mensagem_layout_alterado(produto, loja, dominio)
+                    )
 
                 # Issue #105: o frete entra na medição (produto + frete). Falha
                 # ao ler o frete nunca invalida a coleta do preço.
                 frete = self._extrair_frete_seguro(resposta.text)
                 preco = preco_produto + (frete or Decimal("0.00"))
-
-                historico = HistoricoPreco(
-                    produto_id=produto.id,
-                    preco=preco,
-                    frete=frete,
-                    coleta_valida=True,
-                )
-                db.add(historico)
-                db.commit()
-                db.refresh(historico)
-                logger.info(
-                    "Coleta válida do produto %s: R$ %s (produto R$ %s, frete %s) "
-                    "(tentativa %s)",
-                    produto.id,
-                    preco,
-                    preco_produto,
-                    "n/d" if frete is None else f"R$ {frete}",
-                    tentativa,
-                )
-                return ResultadoColeta(
-                    sucesso=True,
-                    produto_id=produto.id,
-                    preco=preco,
-                    coleta_valida=True,
-                    tentativas=tentativa,
-                    historico_id=historico.id,
-                    frete=frete,
-                    preco_produto=preco_produto,
-                )
-=======
-                preco = extrair_preco(resposta.text, dominio)
-                if preco is None:
-                    raise FalhaColeta(
-                        MOTIVO_LAYOUT, _mensagem_layout_alterado(produto, loja, dominio)
-                    )
->>>>>>> fc95810ab81209f9418926a060684f6f9af4bddb
             except Exception as exc:
                 ultimo_erro = str(exc)
                 ultimo_motivo = _classificar_falha(exc)
@@ -688,7 +650,9 @@ class ColetaService:
                 # intervalo mínimo (RNF08). Esperar nos dois lugares dobrava o tempo.
                 continue
 
-            return self._registrar_sucesso(db, produto, preco, tentativa)
+            return self._registrar_sucesso(
+                db, produto, preco, tentativa, frete=frete, preco_produto=preco_produto
+            )
 
         return self._registrar_falha(
             db,
@@ -699,7 +663,13 @@ class ColetaService:
         )
 
     def _registrar_sucesso(
-        self, db: Session, produto: Produto, preco: Decimal, tentativa: int
+        self,
+        db: Session,
+        produto: Produto,
+        preco: Decimal,
+        tentativa: int,
+        frete: Optional[Decimal] = None,
+        preco_produto: Optional[Decimal] = None,
     ) -> ResultadoColeta:
         """Grava a coleta válida. Falha de banco vira coleta inválida, não exceção."""
         produto_id = produto.id
@@ -708,6 +678,7 @@ class ColetaService:
             historico = HistoricoPreco(
                 produto_id=produto_id,
                 preco=preco,
+                frete=frete,
                 coleta_valida=True,
             )
             db.add(historico)
@@ -731,9 +702,11 @@ class ColetaService:
                 url=url_produto,
             )
         logger.info(
-            "Coleta válida do produto %s: R$ %s (tentativa %s)",
+            "Coleta válida do produto %s: R$ %s (produto R$ %s, frete %s) (tentativa %s)",
             produto_id,
             preco,
+            preco_produto if preco_produto is not None else preco,
+            "n/d" if frete is None else f"R$ {frete}",
             tentativa,
         )
         return ResultadoColeta(
@@ -743,6 +716,8 @@ class ColetaService:
             coleta_valida=True,
             tentativas=tentativa,
             historico_id=historico.id,
+            frete=frete,
+            preco_produto=preco_produto,
         )
 
     @staticmethod
